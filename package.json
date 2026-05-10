@@ -6,9 +6,7 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "dev:api": "next dev",
-    "dev:all": "concurrently \"npm run dev\" \"npm run dev:api\"",
-    "build:api": "next build"
+    "dev:vercel": "vercel dev"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

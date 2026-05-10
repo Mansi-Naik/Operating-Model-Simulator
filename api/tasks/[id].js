@@ -1,4 +1,4 @@
-import { createSupabaseAdmin } from '../../../src/lib/supabaseAdmin.js'
+import { createSupabaseAdmin } from '../../src/lib/supabaseAdmin.js'
 
 /**
  * @param {unknown} value
@@ -37,7 +37,7 @@ function resolveAllowedCorsOrigin(origin) {
 }
 
 /**
- * @param {import('next').NextApiResponse} res
+ * @param {import('http').ServerResponse} res
  * @param {string | undefined} origin
  */
 function applyCorsHeaders(res, origin) {
@@ -55,8 +55,8 @@ const VALID_ALLOCATION = new Set(['human-only', 'tech-assisted', 'tech-automated
 /**
  * PATCH /api/tasks/:id — update user override fields on a task row.
  *
- * @param {import('next').NextApiRequest} req
- * @param {import('next').NextApiResponse} res
+ * @param {*} req
+ * @param {*} res
  */
 export default async function handler(req, res) {
   const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined

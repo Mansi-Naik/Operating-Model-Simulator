@@ -1,8 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
-import { matchCapabilities } from '../../src/lib/capabilityLibrary.js'
-import { buildAllocationPrompt } from '../../src/lib/promptTemplates.js'
-import { createSupabaseAdmin } from '../../src/lib/supabaseAdmin.js'
-import { calibrateConfidence } from '../../src/lib/confidenceCalibration.js'
+import { matchCapabilities } from '../src/lib/capabilityLibrary.js'
+import { buildAllocationPrompt } from '../src/lib/promptTemplates.js'
+import { createSupabaseAdmin } from '../src/lib/supabaseAdmin.js'
+import { calibrateConfidence } from '../src/lib/confidenceCalibration.js'
 
 const MODEL_ID = 'gemini-2.5-flash'
 const FEATURE = 'f2_allocation'
@@ -44,7 +44,7 @@ function resolveAllowedCorsOrigin(origin) {
 }
 
 /**
- * @param {import('next').NextApiResponse} res
+ * @param {import('http').ServerResponse} res
  * @param {string | undefined} origin
  */
 function applyCorsHeaders(res, origin) {
@@ -163,8 +163,8 @@ function engagementRowToContext(engagementRow) {
  *
  * **Env:** `GEMINI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_URL` or `VITE_SUPABASE_URL`
  *
- * @param {import('next').NextApiRequest} req
- * @param {import('next').NextApiResponse} res
+ * @param {*} req
+ * @param {*} res
  * @returns {Promise<void>}
  */
 export default async function handler(req, res) {

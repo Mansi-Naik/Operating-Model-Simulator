@@ -36,7 +36,7 @@ function resolveAllowedCorsOrigin(origin) {
 /**
  * Set common CORS response headers when the caller's origin is allowed.
  *
- * @param {import('next').NextApiResponse} res
+ * @param {import('http').ServerResponse} res
  * @param {string | undefined} origin Request `Origin` header.
  */
 function applyCorsHeaders(res, origin) {
@@ -50,15 +50,13 @@ function applyCorsHeaders(res, origin) {
 }
 
 /**
- * Next.js Pages API handler for `POST /api/gemini`.
+ * `POST /api/gemini` — JSON `{ prompt: string }`, returns `{ response: string }`.
+ * Handles `OPTIONS` for CORS preflight. Errors respond with `{ error: string }`.
  *
- * Expects JSON body `{ prompt: string }`, calls Gemini 2.5 Flash, returns `{ response: string }`.
- * Handles `OPTIONS` for CORS preflight. Errors respond with `{ error: string }` (HTTP 500 for failures).
+ * Requires `GEMINI_API_KEY` (server-side only).
  *
- * Requires `GEMINI_API_KEY` in the environment (server-side only).
- *
- * @param {import('next').NextApiRequest} req
- * @param {import('next').NextApiResponse} res
+ * @param {*} req
+ * @param {*} res
  * @returns {Promise<void>}
  */
 export default async function handler(req, res) {

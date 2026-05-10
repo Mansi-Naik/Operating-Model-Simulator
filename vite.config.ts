@@ -17,8 +17,8 @@ function figmaAssetResolver() {
 }
 
 export default defineConfig({
-  // Next.js API routes (`pages/api/*`) run on `npm run dev:api` (default port 3000).
-  // Proxies browser calls like `fetch('/api/predict-allocation')` from this app (port 5173).
+  // Local: `vercel dev` serves Vite + `/api/*` on one origin (proxy often unused).
+  // Vite-only dev: proxy forwards `fetch('/api/...')` to a backend on port 3000 if needed.
   server: {
     proxy: {
       '/api': {
