@@ -1,53 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import { applyCorsHeaders, resolveAllowedCorsOrigin } from '../src/lib/apiCors.js'
 
 /** Name of the Gemini model used for completions. */
 const MODEL_NAME = 'gemini-2.5-flash'
-
-/**
- * Decide which `Origin` header value may receive `Access-Control-Allow-Origin`.
- * When `ALLOWED_ORIGINS` is set (comma-separated), only listed origins match.
- * When unset, `localhost` / `127.0.0.1` HTTP(S) origins are allowed for local dev.
- *
- * @param {string | undefined} origin Request `Origin` header.
- * @returns {string | null} Origin to mirror in CORS headers, or `null` if disallowed.
- */
-function resolveAllowedCorsOrigin(origin) {
-  if (!origin || typeof origin !== 'string') return null
-  const whitelist = process.env.ALLOWED_ORIGINS
-  if (whitelist?.trim()) {
-    const ok = whitelist
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .includes(origin)
-    return ok ? origin : null
-  }
-  try {
-    const u = new URL(origin)
-    const hostOk =
-      u.hostname === 'localhost' || u.hostname === '127.0.0.1'
-    const schemeOk = u.protocol === 'http:' || u.protocol === 'https:'
-    return hostOk && schemeOk ? origin : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * Set common CORS response headers when the caller's origin is allowed.
- *
- * @param {import('http').ServerResponse} res
- * @param {string | undefined} origin Request `Origin` header.
- */
-function applyCorsHeaders(res, origin) {
-  const allow = resolveAllowedCorsOrigin(origin)
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-  if (allow) {
-    res.setHeader('Access-Control-Allow-Origin', allow)
-    res.setHeader('Vary', 'Origin')
-  }
-}
 
 /**
  * `POST /api/gemini` — JSON `{ prompt: string }`, returns `{ response: string }`.
@@ -62,10 +17,10 @@ function applyCorsHeaders(res, origin) {
 export default async function handler(req, res) {
   const origin =
     typeof req.headers.origin === 'string' ? req.headers.origin : undefined
-  applyCorsHeaders(res, origin)
+  applyCorsHeaders(res, origin, { methods: 'POST, OPTIONS' })
 
   if (req.method === 'OPTIONS') {
-    res.status(204).end()
+    res.status(200).end()
     return
   }
 

@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import { applyCorsHeaders, resolveAllowedCorsOrigin } from '../src/lib/apiCors.js'
 import { matchCapabilities } from '../src/lib/capabilityLibrary.js'
 import { buildAllocationPrompt } from '../src/lib/promptTemplates.js'
 import { createSupabaseAdmin } from '../src/lib/supabaseAdmin.js'
@@ -16,45 +17,6 @@ function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value.trim(),
   )
-}
-
-/**
- * @param {string | undefined} origin
- * @returns {string | null}
- */
-function resolveAllowedCorsOrigin(origin) {
-  if (!origin || typeof origin !== 'string') return null
-  const whitelist = process.env.ALLOWED_ORIGINS
-  if (whitelist?.trim()) {
-    const ok = whitelist
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .includes(origin)
-    return ok ? origin : null
-  }
-  try {
-    const u = new URL(origin)
-    const hostOk = u.hostname === 'localhost' || u.hostname === '127.0.0.1'
-    const schemeOk = u.protocol === 'http:' || u.protocol === 'https:'
-    return hostOk && schemeOk ? origin : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * @param {import('http').ServerResponse} res
- * @param {string | undefined} origin
- */
-function applyCorsHeaders(res, origin) {
-  const allow = resolveAllowedCorsOrigin(origin)
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-  if (allow) {
-    res.setHeader('Access-Control-Allow-Origin', allow)
-    res.setHeader('Vary', 'Origin')
-  }
 }
 
 /**
@@ -170,10 +132,10 @@ function engagementRowToContext(engagementRow) {
 export default async function handler(req, res) {
   const startTime = Date.now()
   const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined
-  applyCorsHeaders(res, origin)
+  applyCorsHeaders(res, origin, { methods: 'POST, OPTIONS' })
 
   if (req.method === 'OPTIONS') {
-    res.status(204).end()
+    res.status(200).end()
     return
   }
 
