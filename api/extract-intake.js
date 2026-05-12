@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import formidable from 'formidable'
+import { jsonrepair } from 'jsonrepair'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { applyCorsHeaders, resolveAllowedCorsOrigin } from '../src/lib/apiCors.js'
 import { buildExtractionPrompt } from '../src/lib/extractionPrompt.js'
@@ -107,6 +108,28 @@ function extractJsonText(raw) {
   const end = s.lastIndexOf('}')
   if (start >= 0 && end > start) return s.slice(start, end + 1)
   return s
+}
+
+/**
+ * Parse model JSON; repair common Gemini malformations (trailing commas, bad strings, truncation).
+ *
+ * @param {string} responseText
+ * @returns {{ value: Record<string, unknown>, repaired: boolean }}
+ */
+function parseExtractionJson(responseText) {
+  const jsonText = extractJsonText(responseText)
+  try {
+    return { value: JSON.parse(jsonText), repaired: false }
+  } catch (firstErr) {
+    try {
+      const repaired = jsonrepair(jsonText)
+      const value = JSON.parse(repaired)
+      console.warn('[extract-intake] JSON.parse failed; jsonrepair recovered:', firstErr?.message)
+      return { value, repaired: true }
+    } catch {
+      throw firstErr
+    }
+  }
 }
 
 /**
@@ -365,13 +388,17 @@ export default async function handler(req, res) {
       return
     }
 
+    const extractMaxOut = Number(process.env.GEMINI_EXTRACT_MAX_OUTPUT_TOKENS)
+    const maxOutputTokens =
+      Number.isFinite(extractMaxOut) && extractMaxOut > 0 ? Math.min(65536, Math.floor(extractMaxOut)) : 65536
+
     const genAI = new GoogleGenerativeAI(apiKey)
     const model = genAI.getGenerativeModel({
       model: MODEL_ID,
       generationConfig: {
         temperature: 0.1,
         responseMimeType: 'application/json',
-        maxOutputTokens: 16384,
+        maxOutputTokens,
       },
     })
 
@@ -380,9 +407,11 @@ export default async function handler(req, res) {
       typeof geminiResult.response?.text === 'function' ? geminiResult.response.text() : ''
 
     let parsed
+    let jsonRepaired = false
     try {
-      const jsonText = extractJsonText(responseText)
-      parsed = JSON.parse(jsonText)
+      const parsedWrap = parseExtractionJson(responseText)
+      parsed = parsedWrap.value
+      jsonRepaired = parsedWrap.repaired
     } catch (parseErr) {
       console.error('[extract-intake] Invalid JSON from model:', parseErr, responseText?.slice(0, 2000))
       await insertLlmCallLog(supabase, {
@@ -400,6 +429,10 @@ export default async function handler(req, res) {
       })
       res.status(500).json({ error: 'Extraction produced invalid output. Try again or use the guided form.' })
       return
+    }
+
+    if (jsonRepaired) {
+      console.warn('[extract-intake] Used jsonrepair on model output (length', responseText?.length, ')')
     }
 
     coerceExtractionPayload(/** @type {Record<string, unknown>} */ (parsed))
