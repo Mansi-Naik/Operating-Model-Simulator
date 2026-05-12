@@ -88,6 +88,86 @@ async function bufferToPlainText(buffer, ext) {
   return ''
 }
 
+/**
+ * Strip markdown fences and isolate `{ ... }` when models wrap JSON.
+ *
+ * @param {string} raw
+ * @returns {string}
+ */
+function extractJsonText(raw) {
+  if (typeof raw !== 'string') return ''
+  let s = raw.trim()
+  if (s.startsWith('```')) {
+    s = s.replace(/^```(?:json)?\s*/i, '')
+    const fence = s.lastIndexOf('```')
+    if (fence >= 0) s = s.slice(0, fence)
+    s = s.trim()
+  }
+  const start = s.indexOf('{')
+  const end = s.lastIndexOf('}')
+  if (start >= 0 && end > start) return s.slice(start, end + 1)
+  return s
+}
+
+/**
+ * Coerce common Gemini quirks (numeric strings, null arrays) before validation.
+ *
+ * @param {Record<string, unknown>} parsed
+ */
+function coerceExtractionPayload(parsed) {
+  const q = parsed.extraction_quality
+  if (typeof q === 'string') {
+    let n = q.trim().toLowerCase().replace(/-/g, '_')
+    if (n === 'not_intake_document') n = 'not_intake_doc'
+    parsed.extraction_quality = n
+  }
+
+  let score = parsed.document_relevance_score
+  if (typeof score === 'string' && score.trim() !== '') {
+    score = Number(score)
+  }
+  if (typeof score === 'number' && Number.isFinite(score)) {
+    parsed.document_relevance_score = Math.max(0, Math.min(1, score))
+  }
+
+  for (const key of ['extracted_fields_count', 'total_possible_fields']) {
+    const v = parsed[key]
+    if (typeof v === 'string' && v.trim() !== '') {
+      const n = parseInt(v, 10)
+      if (Number.isFinite(n)) parsed[key] = n
+    } else if (typeof v === 'number' && Number.isFinite(v)) {
+      parsed[key] = Math.round(v)
+    }
+  }
+
+  if (parsed.summary_message == null || typeof parsed.summary_message !== 'string') {
+    parsed.summary_message = parsed.summary_message == null ? '' : String(parsed.summary_message)
+  }
+
+  if (typeof parsed.extracted_fields_count !== 'number' || !Number.isFinite(parsed.extracted_fields_count)) {
+    parsed.extracted_fields_count = 0
+  }
+  if (typeof parsed.total_possible_fields !== 'number' || !Number.isFinite(parsed.total_possible_fields)) {
+    parsed.total_possible_fields = 50
+  }
+  if (typeof parsed.document_relevance_score !== 'number' || !Number.isFinite(parsed.document_relevance_score)) {
+    parsed.document_relevance_score = 0.5
+  }
+
+  const allowedQ = new Set(['high', 'medium', 'low', 'not_intake_doc'])
+  if (!allowedQ.has(/** @type {string} */ (parsed.extraction_quality))) {
+    parsed.extraction_quality = 'medium'
+  }
+  if (!Array.isArray(parsed.tasks)) parsed.tasks = []
+
+  if (parsed.extraction_warnings == null) parsed.extraction_warnings = []
+  if (!Array.isArray(parsed.extraction_warnings)) parsed.extraction_warnings = []
+
+  if (parsed.intake_data == null || typeof parsed.intake_data !== 'object' || Array.isArray(parsed.intake_data)) {
+    parsed.intake_data = {}
+  }
+}
+
 function validateExtractionPayload(parsed) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return 'Root JSON must be an object'
@@ -97,12 +177,16 @@ function validateExtractionPayload(parsed) {
     return 'Missing or invalid extraction_quality'
   }
   const score = parsed.document_relevance_score
-  if (typeof score !== 'number' || score < 0 || score > 1) {
+  if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 1) {
     return 'Missing or invalid document_relevance_score'
   }
   if (typeof parsed.summary_message !== 'string') return 'Missing summary_message'
-  if (typeof parsed.extracted_fields_count !== 'number') return 'Missing extracted_fields_count'
-  if (typeof parsed.total_possible_fields !== 'number') return 'Missing total_possible_fields'
+  if (typeof parsed.extracted_fields_count !== 'number' || !Number.isFinite(parsed.extracted_fields_count)) {
+    return 'Missing extracted_fields_count'
+  }
+  if (typeof parsed.total_possible_fields !== 'number' || !Number.isFinite(parsed.total_possible_fields)) {
+    return 'Missing total_possible_fields'
+  }
   if (parsed.intake_data == null || typeof parsed.intake_data !== 'object' || Array.isArray(parsed.intake_data)) {
     return 'intake_data must be an object'
   }
@@ -297,9 +381,10 @@ export default async function handler(req, res) {
 
     let parsed
     try {
-      parsed = JSON.parse(responseText.trim())
-    } catch {
-      console.error('[extract-intake] Invalid JSON from model:', responseText?.slice(0, 2000))
+      const jsonText = extractJsonText(responseText)
+      parsed = JSON.parse(jsonText)
+    } catch (parseErr) {
+      console.error('[extract-intake] Invalid JSON from model:', parseErr, responseText?.slice(0, 2000))
       await insertLlmCallLog(supabase, {
         engagement_id: null,
         feature: FEATURE,
@@ -307,7 +392,7 @@ export default async function handler(req, res) {
         prompt_text: promptText,
         response_text: responseText,
         status: 'error',
-        error_message: 'Invalid JSON from Gemini',
+        error_message: `Invalid JSON from Gemini: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
         prompt_tokens: null,
         completion_tokens: null,
         total_tokens: null,
@@ -317,6 +402,7 @@ export default async function handler(req, res) {
       return
     }
 
+    coerceExtractionPayload(/** @type {Record<string, unknown>} */ (parsed))
     const validationErr = validateExtractionPayload(parsed)
     if (validationErr) {
       console.error('[extract-intake] Schema validation failed:', validationErr, parsed)

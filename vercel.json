@@ -5,6 +5,12 @@
   "functions": {
     "api/extract-intake.js": {
       "maxDuration": 300
+    },
+    "api/redesign-role.js": {
+      "maxDuration": 300
+    },
+    "api/detect-emergent-roles.js": {
+      "maxDuration": 300
     }
   }
 }

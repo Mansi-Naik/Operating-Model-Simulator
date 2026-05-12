@@ -163,6 +163,10 @@ export default function App() {
           <FutureRoles
             onBack={() => setCurrentScreen('allocation-matrix')}
             onProceedToF4={handleProceedToF4}
+            onGoToF2={() => {
+              setCurrentFeature('f2');
+              setCurrentScreen('allocation-matrix');
+            }}
           />
         );
       case 'pod-structure':
