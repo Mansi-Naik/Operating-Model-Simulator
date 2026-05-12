@@ -1,56 +1,258 @@
 import { RefreshCw, Settings, Star, Check, ArrowRight, Calculator } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEngagement } from '../../../../hooks/useEngagement';
+import { generateThreeVariants, getF4SpanDefaultsFromEngagement, getSpanCapacityForIntakeRisk } from '../../../../lib/podSizing';
+import { supabase } from '../../../../supabaseClient';
 
-interface Variant {
-  name: string;
-  isRecommended: boolean;
-  isSelected: boolean;
-  agents: number;
-  support: { qa: number; auditor: number; sme: number };
-  stats: {
-    span: string;
-    capacity: string;
-    costIndex: string;
-    risk: 'LOW' | 'MED' | 'MED-HIGH';
-  };
-  narrative: string;
-}
+type RiskProfile = 'low' | 'medium' | 'high';
+type VariantKey = 'conservative' | 'balanced' | 'aggressive';
 
 interface F4_1_VariantSelectorProps {
   onViewOrgRollup: () => void;
   onShowMath: () => void;
-  onBack?: () => void;
 }
 
-export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, onBack }: F4_1_VariantSelectorProps) {
-  const variants: Variant[] = [
-    {
-      name: 'CONSERVATIVE',
-      isRecommended: false,
-      isSelected: false,
-      agents: 8,
-      support: { qa: 0.5, auditor: 0.25, sme: 0.2 },
-      stats: { span: '1:8', capacity: '4,500', costIndex: '1.05', risk: 'LOW' },
-      narrative: 'Tight span, high support density. Best when regulated or early in transition before AI maturity is proven.',
-    },
-    {
-      name: 'BALANCED',
-      isRecommended: true,
-      isSelected: true,
-      agents: 12,
-      support: { qa: 0.4, auditor: 0.3, sme: 0.15 },
-      stats: { span: '1:12', capacity: '6,800', costIndex: '1.00', risk: 'MED' },
-      narrative: 'Industry benchmark midpoint for safety work. Recommended default — balances cost, risk, and supervisory load.',
-    },
-    {
-      name: 'AGGRESSIVE',
-      isRecommended: false,
-      isSelected: false,
-      agents: 18,
-      support: { qa: 0.3, auditor: 0.4, sme: 0.1 },
-      stats: { span: '1:18', capacity: '10,200', costIndex: '0.85', risk: 'MED-HIGH' },
-      narrative: 'Wide span, lean support. Best when AI confidence is consistently high. Requires mature AI Ops to manage exception load.',
-    },
-  ];
+function variantKeyToRiskChip(key: string): RiskChip {
+  if (key === 'conservative') return 'LOW';
+  if (key === 'aggressive') return 'MED-HIGH';
+  return 'MED';
+}
+
+function formatInt(n: number): string {
+  if (!Number.isFinite(n)) return '0';
+  return Math.round(n).toLocaleString('en-US');
+}
+
+function formatCostIndex(n: number): string {
+  if (!Number.isFinite(n)) return '1.00';
+  return (Math.round(n * 100) / 100).toFixed(2);
+}
+
+function agentsGridLayout(agentCount: number): { perRow: number; rows: number } {
+  const n = Math.max(0, Math.floor(agentCount));
+  if (n <= 0) return { perRow: 1, rows: 1 };
+  if (n <= 8) return { perRow: n, rows: 1 };
+  if (n <= 12) return { perRow: 6, rows: Math.ceil(n / 6) };
+  return { perRow: 9, rows: Math.ceil(n / 9) };
+}
+
+function fmtSupport(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+
+interface PodVisualProps {
+  agents: number;
+  support: { qa: number; auditor: number; sme: number };
+}
+
+function F4PodVisual({ agents, support }: PodVisualProps) {
+  const { perRow, rows } = agentsGridLayout(agents);
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="w-16 h-8 bg-[#FD4E59] text-white rounded flex items-center justify-center text-[14px] font-medium">
+        TL
+      </div>
+      <div className="h-4" />
+      <div className="w-0.5 h-4 bg-[#6D7069]" />
+      <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-1">
+          {Array.from({ length: rows }).map((_, rowIdx) => (
+            <div key={rowIdx} className="flex gap-1">
+              {Array.from({
+                length: Math.min(perRow, agents - rowIdx * perRow),
+              }).map((_, colIdx) => (
+                <div key={colIdx} className="w-5 h-6 bg-[#FDF8F4] border border-[#6D7069] rounded" />
+              ))}
+            </div>
+          ))}
+        </div>
+        <span className="text-[14px] font-medium text-[#161916]">{agents}</span>
+      </div>
+      <div className="h-4" />
+      <div className="flex items-center gap-2">
+        <div className="w-[92px] h-6 bg-[#FDF8F4] border border-dashed border-[#6D7069] rounded flex items-center justify-center text-[11px] text-[#161916]">
+          {fmtSupport(support.qa)} QA
+        </div>
+        <div className="w-[92px] h-6 bg-[#FDF8F4] border border-dashed border-[#6D7069] rounded flex items-center justify-center text-[11px] text-[#161916]">
+          {fmtSupport(support.auditor)} AI Aud
+        </div>
+        <div className="w-[92px] h-6 bg-[#FDF8F4] border border-dashed border-[#6D7069] rounded flex items-center justify-center text-[11px] text-[#161916]">
+          {fmtSupport(support.sme)} SME
+        </div>
+      </div>
+    </div>
+  );
+}
+
+async function persistF4PodsSelection(
+  engagementId: string,
+  payload: Record<string, unknown>,
+): Promise<{ ok: boolean; error?: string }> {
+  const { data: row, error: selErr } = await supabase
+    .from('pipeline_runs')
+    .select('id')
+    .eq('engagement_id', engagementId)
+    .maybeSingle();
+
+  if (selErr) return { ok: false, error: selErr.message };
+
+  if (row?.id) {
+    const { error } = await supabase.from('pipeline_runs').update({ f4_pods: payload }).eq('id', row.id);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  }
+
+  const { error: insErr } = await supabase.from('pipeline_runs').insert({
+    engagement_id: engagementId,
+    f4_pods: payload,
+  });
+  if (insErr) return { ok: false, error: insErr.message };
+  return { ok: true };
+}
+
+export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath }: F4_1_VariantSelectorProps) {
+  const engagementIdFromUrl =
+    typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
+
+  const { engagement, tasks, loading: engagementLoading, error: engagementError, loadEngagement } =
+    useEngagement(engagementIdFromUrl);
+
+  const [pipelineLoaded, setPipelineLoaded] = useState(false);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
+
+  const [riskProfile, setRiskProfile] = useState<RiskProfile>('medium');
+  const [targetSpan, setTargetSpan] = useState<number>(15);
+  const [maxPodSize, setMaxPodSize] = useState<number>(20);
+  const [mustInclude] = useState<string[]>(['TL', 'QA Officer']);
+  const [sharedSupport] = useState<string[]>(['SME', 'AI Ops']);
+
+  const [constraintsHydrated, setConstraintsHydrated] = useState(false);
+
+  const [selectedVariantName, setSelectedVariantName] = useState<VariantKey | null>(null);
+  const [persistOk, setPersistOk] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savingSelection, setSavingSelection] = useState(false);
+
+  const [narrativeByKey, setNarrativeByKey] = useState<Record<string, string>>({});
+  const [narrativePending, setNarrativePending] = useState<Record<string, boolean>>({});
+
+  const narrativeFetchGen = useRef(0);
+
+  useEffect(() => {
+    if (!engagement || constraintsHydrated) return;
+    const { intake_risk_tolerance, span } = getF4SpanDefaultsFromEngagement(engagement as Record<string, unknown>);
+    setRiskProfile(intake_risk_tolerance);
+    setTargetSpan(span.recommended);
+    setMaxPodSize(20);
+    setConstraintsHydrated(true);
+  }, [engagement, constraintsHydrated]);
+
+  useEffect(() => {
+    if (!engagementIdFromUrl) {
+      setPipelineError('Missing engagement');
+      setPipelineLoaded(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { error } = await supabase.from('pipeline_runs').select('id, f3_roles').eq('engagement_id', engagementIdFromUrl).maybeSingle();
+      if (cancelled) return;
+      if (error) setPipelineError(error.message);
+      setPipelineLoaded(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [engagementIdFromUrl]);
+
+  const engagementRecord = engagement as Record<string, unknown> | null;
+  const taskRows = useMemo(() => (Array.isArray(tasks) ? (tasks as Record<string, unknown>[]) : []), [tasks]);
+
+  const sizingVariants = useMemo(() => {
+    if (!engagementRecord) return [];
+    return generateThreeVariants(engagementRecord, taskRows, {
+      overrideConstraints: {
+        risk_profile: riskProfile,
+        target_span: targetSpan,
+        max_pod_size: maxPodSize,
+      },
+    }) as Record<string, unknown>[];
+  }, [engagementRecord, taskRows, riskProfile, targetSpan, maxPodSize]);
+
+  const variantSignature = useMemo(() => JSON.stringify(sizingVariants), [sizingVariants]);
+
+  useEffect(() => {
+    if (!engagementIdFromUrl || sizingVariants.length !== 3) return;
+
+    const gen = ++narrativeFetchGen.current;
+    const keys: VariantKey[] = ['conservative', 'balanced', 'aggressive'];
+
+    setNarrativePending({ conservative: true, balanced: true, aggressive: true });
+    setNarrativeByKey({});
+
+    for (const key of keys) {
+      const variantData = sizingVariants.find(
+        (v) => String((v as Record<string, unknown>).variant_name ?? '').toLowerCase() === key,
+      ) as Record<string, unknown> | undefined;
+
+      if (!variantData) {
+        setNarrativeByKey((prev) => ({ ...prev, [key]: 'Industry-typical configuration' }));
+        setNarrativePending((prev) => ({ ...prev, [key]: false }));
+        continue;
+      }
+
+      void (async () => {
+        try {
+          const res = await fetch('/api/generate-variant-narrative', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              engagementId: engagementIdFromUrl,
+              variantName: key,
+              variantData,
+            }),
+          });
+          const body = (await res.json().catch(() => ({}))) as { narrative?: string; error?: string };
+          if (narrativeFetchGen.current !== gen) return;
+          if (!res.ok || typeof body.narrative !== 'string' || !body.narrative.trim()) {
+            setNarrativeByKey((prev) => ({ ...prev, [key]: 'Industry-typical configuration' }));
+          } else {
+            const text = body.narrative.trim();
+            setNarrativeByKey((prev) => ({ ...prev, [key]: text }));
+          }
+        } catch {
+          if (narrativeFetchGen.current !== gen) return;
+          setNarrativeByKey((prev) => ({ ...prev, [key]: 'Industry-typical configuration' }));
+        } finally {
+          if (narrativeFetchGen.current !== gen) return;
+          setNarrativePending((prev) => ({ ...prev, [key]: false }));
+        }
+      })();
+    }
+  }, [variantSignature, engagementIdFromUrl]);
+
+  const constraintsHydratedRef = useRef(false);
+  useEffect(() => {
+    if (!constraintsHydrated) return;
+    if (!constraintsHydratedRef.current) {
+      constraintsHydratedRef.current = true;
+      return;
+    }
+    setSelectedVariantName(null);
+    setPersistOk(false);
+  }, [riskProfile, targetSpan, maxPodSize, constraintsHydrated]);
+
+  const handleRiskChange = (next: RiskProfile) => {
+    setRiskProfile(next);
+    const span = getSpanCapacityForIntakeRisk(next);
+    setTargetSpan(span.recommended);
+  };
+
+  const handleReRun = useCallback(() => {
+    if (engagementIdFromUrl) void loadEngagement(engagementIdFromUrl);
+  }, [engagementIdFromUrl, loadEngagement]);
 
   const getRiskChip = (risk: string) => {
     const configs = {
@@ -69,79 +271,78 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, onBack }: F4
     );
   };
 
-  const renderPodVisual = (variant: Variant) => {
-    // Determine grid layout: 8 in one row, 12 as 6+6, 18 as 9+9
-    const agentsPerRow = variant.agents === 8 ? 8 : variant.agents === 12 ? 6 : 9;
-    const rows = Math.ceil(variant.agents / agentsPerRow);
+  const loading = engagementLoading || !pipelineLoaded;
+  const error = engagementError ?? pipelineError;
 
-    return (
-      <div className="flex flex-col items-center">
-        {/* TL Box - 64x32px */}
-        <div className="w-16 h-8 bg-[#FD4E59] text-white rounded flex items-center justify-center text-[14px] font-medium">
-          TL
-        </div>
+  const canViewOrgRollup = persistOk && selectedVariantName != null && !savingSelection;
 
-        {/* 16px vertical gap */}
-        <div className="h-4" />
+  const handleSelectVariant = async (key: VariantKey) => {
+    setSelectedVariantName(key);
+    setPersistOk(false);
+    setSaveError(null);
+    if (!engagementIdFromUrl) {
+      setSaveError('Missing engagement id');
+      return;
+    }
 
-        {/* 2px grey vertical line, 16px tall */}
-        <div className="w-0.5 h-4 bg-[#6D7069]" />
+    const constraintsSnapshot = {
+      risk_profile: riskProfile,
+      target_span: targetSpan,
+      max_pod_size: maxPodSize,
+      must_include: mustInclude,
+      shared_support: sharedSupport,
+    };
 
-        {/* Agent boxes with number label to the right - 4px gaps */}
-        <div className="flex items-center gap-2">
-          <div className="flex flex-col gap-1">
-            {Array.from({ length: rows }).map((_, rowIdx) => (
-              <div key={rowIdx} className="flex gap-1">
-                {Array.from({
-                  length: Math.min(agentsPerRow, variant.agents - rowIdx * agentsPerRow)
-                }).map((_, colIdx) => (
-                  <div
-                    key={colIdx}
-                    className="w-5 h-6 bg-[#FDF8F4] border border-[#6D7069] rounded"
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
-          <span className="text-[14px] font-medium text-[#161916]">{variant.agents}</span>
-        </div>
+    const allVariants = sizingVariants.map((raw) => {
+      const v = raw as Record<string, unknown>;
+      const name = String(v.variant_name ?? '').toLowerCase();
+      const narrative =
+        typeof narrativeByKey[name] === 'string' && narrativeByKey[name]
+          ? narrativeByKey[name]
+          : 'Industry-typical configuration';
+      return { ...v, narrative };
+    });
 
-        {/* 16px vertical gap below agent stack */}
-        <div className="h-4" />
+    const payload = {
+      selected_variant_name: key,
+      all_variants: allVariants,
+      constraints_used: constraintsSnapshot,
+      selected_at: new Date().toISOString(),
+    };
 
-        {/* Support roles - horizontal pills, 8px gap between pills */}
-        <div className="flex items-center gap-2">
-          <div className="w-[92px] h-6 bg-[#FDF8F4] border border-dashed border-[#6D7069] rounded flex items-center justify-center text-[11px] text-[#161916]">
-            {variant.support.qa} QA
-          </div>
-          <div className="w-[92px] h-6 bg-[#FDF8F4] border border-dashed border-[#6D7069] rounded flex items-center justify-center text-[11px] text-[#161916]">
-            {variant.support.auditor} AI Aud
-          </div>
-          <div className="w-[92px] h-6 bg-[#FDF8F4] border border-dashed border-[#6D7069] rounded flex items-center justify-center text-[11px] text-[#161916]">
-            {variant.support.sme} SME
-          </div>
-        </div>
-      </div>
-    );
+    setSavingSelection(true);
+    const result = await persistF4PodsSelection(engagementIdFromUrl, payload);
+    setSavingSelection(false);
+    if (!result.ok) {
+      setSaveError(result.error ?? 'Save failed');
+      setPersistOk(false);
+    } else {
+      setPersistOk(true);
+    }
   };
 
   return (
     <div className="p-8 max-w-[1204px] mx-auto">
-      {/* Top Row */}
       <div className="flex items-center justify-between mb-6">
         <div className="text-[13px] text-[#161916]">PODS</div>
         <div className="flex items-center gap-2">
-          <button className="h-9 px-4 border border-[#494949]/30 text-[#494949] text-[13px] rounded-md hover:bg-[#494949]/5 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleReRun}
+            className="h-9 px-4 border border-[#494949]/30 text-[#494949] text-[13px] rounded-md hover:bg-[#494949]/5 flex items-center gap-2"
+          >
             <RefreshCw className="w-4 h-4" />
             Re-run
           </button>
-          <button className="h-9 px-3 border border-[#494949]/30 text-[#494949] rounded-md hover:bg-[#494949]/5">
+          <button
+            type="button"
+            className="h-9 px-3 border border-[#494949]/30 text-[#494949] rounded-md hover:bg-[#494949]/5"
+          >
             <Settings className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* Title - 24px below top row */}
       <div className="mb-6">
         <h1 className="text-[24px] font-bold text-[#161916]">Pod structure</h1>
         <p className="text-[13px] text-[#6D7069]">
@@ -149,20 +350,39 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, onBack }: F4
         </p>
       </div>
 
-      {/* Constraints Bar - 24px padding, controls at 36px height */}
+      {error ? (
+        <div className="mb-6 text-[14px] text-[#FD4E59] border border-[#FD4E59]/30 rounded-lg p-4 bg-[#FCE4D6]/30">
+          {error}
+        </div>
+      ) : null}
+      {saveError ? (
+        <div className="mb-6 text-[14px] text-[#FD4E59] border border-[#FD4E59]/30 rounded-lg p-4 bg-[#FCE4D6]/30">
+          {saveError}
+        </div>
+      ) : null}
+
       <div className="bg-[#FDF8F4] border border-[#494949]/12 rounded-xl p-6 mb-6">
         <div className="flex items-end gap-6 flex-wrap">
           <div>
             <label className="block text-[12px] text-[#494949] mb-1">Risk profile</label>
-            <select className="h-9 px-3 bg-white border border-[#494949]/30 rounded-md text-[14px] text-[#161916] min-w-[120px]">
-              <option>HIGH</option>
+            <select
+              className="h-9 px-3 bg-white border border-[#494949]/30 rounded-md text-[14px] text-[#161916] min-w-[120px]"
+              value={riskProfile}
+              onChange={(e) => handleRiskChange(e.target.value as RiskProfile)}
+            >
+              <option value="low">LOW</option>
+              <option value="medium">MEDIUM</option>
+              <option value="high">HIGH</option>
             </select>
           </div>
           <div>
             <label className="block text-[12px] text-[#494949] mb-1">Target span</label>
             <input
-              type="text"
-              defaultValue="<= 12"
+              type="number"
+              min={1}
+              max={99}
+              value={targetSpan}
+              onChange={(e) => setTargetSpan(Number(e.target.value) || 0)}
               className="h-9 px-3 bg-white border border-[#494949]/30 rounded-md text-[14px] text-[#161916] w-[100px]"
             />
           </div>
@@ -170,118 +390,146 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, onBack }: F4
             <label className="block text-[12px] text-[#494949] mb-1">Max pod size</label>
             <input
               type="number"
-              defaultValue="20"
+              min={1}
+              max={99}
+              value={maxPodSize}
+              onChange={(e) => setMaxPodSize(Number(e.target.value) || 0)}
               className="h-9 px-3 bg-white border border-[#494949]/30 rounded-md text-[14px] text-[#161916] w-[100px]"
             />
           </div>
           <div>
             <label className="block text-[12px] text-[#494949] mb-1">Must include</label>
             <div className="flex items-center gap-2 h-9">
-              <div className="h-7 px-3 bg-white border border-[#FD4E59] rounded-full text-[13px] text-[#161916] flex items-center gap-2">
-                TL
-                <button className="text-[#FD4E59]">×</button>
-              </div>
-              <div className="h-7 px-3 bg-white border border-[#FD4E59] rounded-full text-[13px] text-[#161916] flex items-center gap-2">
-                QA Officer
-                <button className="text-[#FD4E59]">×</button>
-              </div>
+              {mustInclude.map((label) => (
+                <div
+                  key={label}
+                  className="h-7 px-3 bg-white border border-[#FD4E59] rounded-full text-[13px] text-[#161916] flex items-center gap-2"
+                >
+                  {label}
+                </div>
+              ))}
             </div>
           </div>
           <div>
             <label className="block text-[12px] text-[#494949] mb-1">Shared support</label>
             <div className="flex items-center gap-2 h-9">
-              <div className="h-7 px-3 bg-white border border-[#FD4E59] rounded-full text-[13px] text-[#161916] flex items-center gap-2">
-                SME
-                <button className="text-[#FD4E59]">×</button>
-              </div>
-              <div className="h-7 px-3 bg-white border border-[#FD4E59] rounded-full text-[13px] text-[#161916] flex items-center gap-2">
-                AI Ops
-                <button className="text-[#FD4E59]">×</button>
-              </div>
+              {sharedSupport.map((label) => (
+                <div
+                  key={label}
+                  className="h-7 px-3 bg-white border border-[#FD4E59] rounded-full text-[13px] text-[#161916] flex items-center gap-2"
+                >
+                  {label}
+                </div>
+              ))}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Variant Grid - ~360px each card, 24px gap, 480px height */}
       <div className="grid grid-cols-3 gap-6 mb-8">
-        {variants.map((variant) => (
-          <div
-            key={variant.name}
-            className={`bg-[#FDF8F4] rounded-xl p-6 relative flex flex-col ${
-              variant.isSelected ? 'border-2 border-[#FD4E59]' : 'border border-[#494949]/12'
-            }`}
-            style={{ height: '480px' }}
-          >
-            {/* Star Badge - positioned inside with proper padding */}
-            {variant.isRecommended && (
-              <div className="absolute top-6 right-6 w-8 h-8 bg-[#FD4E59] rounded-full flex items-center justify-center">
-                <Star className="w-4 h-4 text-white fill-white" />
-              </div>
-            )}
-
-            {/* Section 1: Variant name - 16px bold caps */}
-            <h3 className="text-[16px] font-bold text-[#161916] uppercase tracking-wide mb-4">
-              {variant.name}
-            </h3>
-
-            {/* Section 2: Pod visual - centered, fixed height ~200px */}
-            <div className="mb-4" style={{ height: '200px' }}>
-              {renderPodVisual(variant)}
-            </div>
-
-            {/* Section 3: Stats grid - 2x2, 8px gap between cells */}
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              <div>
-                <div className="text-[11px] text-[#6D7069] uppercase tracking-wide mb-1">Span</div>
-                <div className="text-[18px] font-bold text-[#161916]">{variant.stats.span}</div>
-              </div>
-              <div>
-                <div className="text-[11px] text-[#6D7069] uppercase tracking-wide mb-1">Capacity/Day</div>
-                <div className="text-[18px] font-bold text-[#161916]">{variant.stats.capacity}</div>
-              </div>
-              <div>
-                <div className="text-[11px] text-[#6D7069] uppercase tracking-wide mb-1">Cost Index</div>
-                <div className="text-[18px] font-bold text-[#161916]">{variant.stats.costIndex}</div>
-              </div>
-              <div>
-                <div className="text-[11px] text-[#6D7069] uppercase tracking-wide mb-1">Risk</div>
-                <div>{getRiskChip(variant.stats.risk)}</div>
-              </div>
-            </div>
-
-            {/* Section 5: Narrative - italic 13px, max 3 lines with ellipsis */}
-            <p
-              className="text-[13px] italic text-[#494949] mb-4 leading-relaxed overflow-hidden"
-              style={{
-                display: '-webkit-box',
-                WebkitLineClamp: 3,
-                WebkitBoxOrient: 'vertical',
-              }}
-            >
-              {variant.narrative}
-            </p>
-
-            {/* Section 6: Select button - full width, 40px tall at bottom edge */}
-            <div className="mt-auto">
-              <button
-                className={`w-full h-10 rounded-md text-[14px] font-semibold flex items-center justify-center gap-2 ${
-                  variant.isSelected
-                    ? 'bg-[#FD4E59] text-white'
-                    : 'border-[1.5px] border-[#FD4E59] text-[#FD4E59] bg-transparent'
-                }`}
+        {loading || sizingVariants.length !== 3
+          ? [0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="bg-[#FDF8F4] rounded-xl p-6 border border-[#494949]/12 flex items-center justify-center"
+                style={{ height: '480px' }}
               >
-                {variant.isSelected && <Check className="w-4 h-4" />}
-                {variant.isSelected ? 'Selected' : 'Select'}
-              </button>
-            </div>
-          </div>
-        ))}
+                <span className="text-[14px] text-[#494949]">Loading variants…</span>
+              </div>
+            ))
+          : sizingVariants.map((raw) => {
+              const v = raw as Record<string, unknown>;
+              const key = String(v.variant_name ?? '').toLowerCase() as VariantKey;
+              const pod = (v.pod_composition as Record<string, unknown>) ?? {};
+              const agents = Math.max(0, Math.floor(Number(pod.agents_per_pod) || 0));
+              const qa = Number(pod.qa_per_pod) || 0;
+              const auditor = Number(pod.ai_auditor_per_pod) || 0;
+              const sme = Number(pod.sme_per_pod) || 0;
+              const cap = Number(pod.pod_capacity_per_day) || 0;
+              const costIdx = Number(v.cost_index) || 0;
+              const isRecommended = Boolean(v.is_recommended);
+              const isSelected = selectedVariantName === key;
+              const riskChip = variantKeyToRiskChip(key);
+              const narrativeText = narrativeByKey[key];
+              const narrativeLoading = Boolean(narrativePending[key]);
+              const narrativeDisplay = narrativeLoading
+                ? 'Loading recommendation...'
+                : narrativeText || 'Industry-typical configuration';
+
+              return (
+                <div
+                  key={key}
+                  className={`bg-[#FDF8F4] rounded-xl p-6 relative flex flex-col ${
+                    isSelected ? 'border-2 border-[#FD4E59]' : 'border border-[#494949]/12'
+                  }`}
+                  style={{ height: '480px' }}
+                >
+                  {isRecommended && (
+                    <div className="absolute top-6 right-6 w-8 h-8 bg-[#FD4E59] rounded-full flex items-center justify-center">
+                      <Star className="w-4 h-4 text-white fill-white" />
+                    </div>
+                  )}
+
+                  <h3 className="text-[16px] font-bold text-[#161916] uppercase tracking-wide mb-4">
+                    {String(v.display_name ?? key).toUpperCase()}
+                  </h3>
+
+                  <div className="mb-4" style={{ height: '200px' }}>
+                    <F4PodVisual agents={agents} support={{ qa, auditor, sme }} />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mb-4">
+                    <div>
+                      <div className="text-[11px] text-[#6D7069] uppercase tracking-wide mb-1">Span</div>
+                      <div className="text-[18px] font-bold text-[#161916]">{`1:${agents}`}</div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-[#6D7069] uppercase tracking-wide mb-1">Capacity/Day</div>
+                      <div className="text-[18px] font-bold text-[#161916]">{formatInt(cap)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-[#6D7069] uppercase tracking-wide mb-1">Cost Index</div>
+                      <div className="text-[18px] font-bold text-[#161916]">{formatCostIndex(costIdx)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-[#6D7069] uppercase tracking-wide mb-1">Risk</div>
+                      <div>{getRiskChip(riskChip)}</div>
+                    </div>
+                  </div>
+
+                  <p
+                    className="text-[13px] italic text-[#494949] mb-4 leading-relaxed overflow-hidden"
+                    style={{
+                      display: '-webkit-box',
+                      WebkitLineClamp: 3,
+                      WebkitBoxOrient: 'vertical',
+                    }}
+                  >
+                    {narrativeDisplay}
+                  </p>
+
+                  <div className="mt-auto">
+                    <button
+                      type="button"
+                      onClick={() => void handleSelectVariant(key)}
+                      className={`w-full h-10 rounded-md text-[14px] font-semibold flex items-center justify-center gap-2 ${
+                        isSelected
+                          ? 'bg-[#FD4E59] text-white'
+                          : 'border-[1.5px] border-[#FD4E59] text-[#FD4E59] bg-transparent'
+                      }`}
+                    >
+                      {isSelected && <Check className="w-4 h-4" />}
+                      {isSelected ? 'Selected' : 'Select'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
       </div>
 
-      {/* Footer Actions - 32px gap above */}
       <div className="flex items-center justify-between pt-8">
         <button
+          type="button"
           onClick={onShowMath}
           className="h-11 px-6 text-[#494949] text-[14px] hover:bg-[#494949]/5 rounded-md flex items-center gap-2"
         >
@@ -289,8 +537,10 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, onBack }: F4
           Show math
         </button>
         <button
-          onClick={onViewOrgRollup}
-          className="h-11 px-6 bg-[#FD4E59] text-white text-[15px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2"
+          type="button"
+          disabled={!canViewOrgRollup}
+          onClick={() => canViewOrgRollup && onViewOrgRollup()}
+          className="h-11 px-6 bg-[#FD4E59] text-white text-[15px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2 disabled:opacity-50 disabled:pointer-events-none"
         >
           View org rollup
           <ArrowRight className="w-5 h-5" />

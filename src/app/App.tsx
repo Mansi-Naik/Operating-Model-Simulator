@@ -170,7 +170,16 @@ export default function App() {
           />
         );
       case 'pod-structure':
-        return <PodStructure onBack={() => setCurrentScreen('future-roles')} onProceedToF5={handleProceedToF5} />;
+        return (
+          <PodStructure
+            onBack={() => setCurrentScreen('future-roles')}
+            onProceedToF5={handleProceedToF5}
+            onGoToF3={() => {
+              setCurrentFeature('f3');
+              setCurrentScreen('future-roles');
+            }}
+          />
+        );
       case 'economics':
         return <Economics onBack={() => setCurrentScreen('pod-structure')} onProceedToF6={handleProceedToF6} />;
       case 'timeline':

@@ -11,6 +11,9 @@
     },
     "api/detect-emergent-roles.js": {
       "maxDuration": 300
+    },
+    "api/generate-variant-narrative.js": {
+      "maxDuration": 60
     }
   }
 }
