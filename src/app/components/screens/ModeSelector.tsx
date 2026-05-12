@@ -81,9 +81,22 @@ export function ModeSelector({
         method: 'POST',
         body: fd,
       });
-      const body = (await res.json().catch(() => ({}))) as { error?: string } & Partial<ExtractionApiBody>;
+      const raw = await res.text();
+      let body = {} as { error?: string } & Partial<ExtractionApiBody>;
+      try {
+        body = raw ? (JSON.parse(raw) as typeof body) : {};
+      } catch {
+        body = {};
+      }
       if (!res.ok) {
-        setErrorMessage(typeof body?.error === 'string' ? body.error : `Upload failed (${res.status})`);
+        const fromJson = typeof body?.error === 'string' ? body.error.trim() : '';
+        const fallback =
+          raw && !fromJson && !raw.trimStart().startsWith('<')
+            ? raw.trim().slice(0, 280)
+            : '';
+        setErrorMessage(
+          fromJson || fallback || `Upload failed (${res.status}). Check Vercel → Functions logs and env vars.`,
+        );
         return;
       }
 

@@ -30,3 +30,4 @@ Thumbs.db
 
 # Vercel CLI local global config (used by npm run dev:all)
 .vercel-global/
+.vercel
