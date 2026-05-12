@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, HelpCircle } from 'lucide-react';
 import { useEngagement } from '../../../../hooks/useEngagement';
 
@@ -52,6 +52,41 @@ export function StepKPIs({ data, onNext, onBack, currentStep, totalSteps }: Step
   const engagementId = data?.engagementId ?? engagementIdFromUrl ?? null;
 
   const { engagement, updateEngagement, loadEngagement } = useEngagement(engagementId);
+
+  const hydratedIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!engagement?.id || !engagement.intake_data) return;
+    if (hydratedIdRef.current === engagement.id) return;
+    hydratedIdRef.current = engagement.id;
+    const kpis = (engagement.intake_data as Record<string, unknown>).kpis as Record<string, Record<string, unknown>> | undefined;
+    if (!kpis || typeof kpis !== 'object') return;
+
+    const applyKpi = (
+      section: 'productivity' | 'quality' | 'customer',
+      name: string,
+      block: Record<string, unknown> | undefined,
+    ) => {
+      if (!block) return;
+      const cur = block.actual != null ? String(block.actual) : '';
+      const tgt = block.target != null ? String(block.target) : '';
+      const setter =
+        section === 'productivity' ? setProductivityKPIs : section === 'quality' ? setQualityKPIs : setCustomerKPIs;
+      setter((prev) => prev.map((k) => (k.name === name ? { ...k, current: cur, target: tgt } : k)));
+    };
+
+    applyKpi('productivity', 'Average Handle Time', kpis.turnaround_time);
+    applyKpi('productivity', 'First Contact Resolution', kpis.first_contact_resolution);
+    applyKpi('productivity', 'Calls Per Hour', kpis.productivity);
+    applyKpi('quality', 'Quality Score %', kpis.quality_score);
+    applyKpi('quality', 'CSAT Score', kpis.csat_or_nps);
+    applyKpi('customer', 'NPS', kpis.csat_or_nps);
+
+    const shr = kpis.shrinkage as { actual?: unknown } | undefined;
+    if (shr?.actual != null) setShrinkage(String(shr.actual));
+    const util = kpis.utilization as { actual?: unknown } | undefined;
+    if (util?.actual != null) setUtilisation(String(util.actual));
+  }, [engagement?.id, engagement?.intake_data]);
 
   const find = (arr: KPI[], name: string) => arr.find((k) => k.name === name);
 

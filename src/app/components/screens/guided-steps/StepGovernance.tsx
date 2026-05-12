@@ -1,6 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, HelpCircle, Sparkles } from 'lucide-react';
 import { useEngagement } from '../../../../hooks/useEngagement';
+import { IntakeAiBadge } from '../../intake/IntakeAiBadge';
+import {
+  cloneIntake,
+  collectAiConfidenceByFieldPath,
+  removeConfidenceAtFieldPath,
+} from '../../../../lib/intakeAiUtils';
 
 interface Risk {
   id: string;
@@ -10,11 +16,16 @@ interface Risk {
 }
 
 interface StepGovernanceProps {
-  data: any;
-  onNext: (data: any) => void;
+  data: Record<string, unknown>;
+  onNext: (data: Record<string, unknown>) => void;
   onBack: () => void;
   currentStep: number;
   totalSteps: number;
+}
+
+function toUiSeverity(s: string): string {
+  const x = String(s || 'low').toLowerCase();
+  return x.charAt(0).toUpperCase() + x.slice(1);
 }
 
 export function StepGovernance({ data, onNext, onBack, currentStep, totalSteps }: StepGovernanceProps) {
@@ -27,12 +38,71 @@ export function StepGovernance({ data, onNext, onBack, currentStep, totalSteps }
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [aiPaths, setAiPaths] = useState(() => new Set<string>());
+  const [confMap, setConfMap] = useState(() => new Map<string, 'high' | 'medium' | 'low'>());
+  const initialAiPathsRef = useRef(new Set<string>());
+  const hydratedIdRef = useRef<string | null>(null);
 
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
-  const engagementId = data?.engagementId ?? engagementIdFromUrl ?? null;
+  const engagementId = (data?.engagementId as string | undefined) ?? engagementIdFromUrl ?? null;
 
   const { engagement, updateEngagement, loadEngagement } = useEngagement(engagementId);
+
+  useEffect(() => {
+    if (!engagement?.id || !engagement.intake_data) return;
+    if (hydratedIdRef.current === engagement.id) return;
+    hydratedIdRef.current = engagement.id;
+
+    const intake = engagement.intake_data as Record<string, unknown>;
+    const g = (intake.governance as Record<string, unknown>) || {};
+    const rc = Array.isArray(g.risk_categories) ? (g.risk_categories as Record<string, unknown>[]) : [];
+    if (rc.length > 0) {
+      setRisks(
+        rc.map((row, i) => ({
+          id: `g-${i}`,
+          category: typeof row.name === 'string' ? row.name : '',
+          severity: toUiSeverity(typeof row.severity === 'string' ? row.severity : 'low'),
+          escalationPath: typeof row.description === 'string' ? row.description : '',
+        })),
+      );
+    }
+    const ctrls = Array.isArray(g.controls_in_place) ? (g.controls_in_place as string[]) : [];
+    if (ctrls.length > 0) setControls(ctrls);
+    const wNotes = typeof g.wellness_notes === 'string' ? g.wellness_notes : '';
+    if (wNotes) setWellness(wNotes);
+    else if (g.wellness_support === true) setWellness('Yes');
+    const incNotes = typeof g.incidents_notes === 'string' ? g.incidents_notes : '';
+    if (incNotes) setIncidents(incNotes);
+
+    const m = collectAiConfidenceByFieldPath(intake);
+    const gov = new Set<string>();
+    const cm = new Map<string, 'high' | 'medium' | 'low'>();
+    for (const [p, c] of m.entries()) {
+      if (!p.startsWith('governance.')) continue;
+      gov.add(p);
+      cm.set(p, c);
+    }
+    setAiPaths(gov);
+    setConfMap(cm);
+    initialAiPathsRef.current = new Set(gov);
+  }, [engagement?.id, engagement?.intake_data]);
+
+  const riskPath = (rowIndex: number, field: 'name' | 'severity' | 'description') =>
+    `governance.risk_categories[${rowIndex}].${field}`;
+
+  const clearAi = (path: string) => {
+    setAiPaths((prev) => {
+      const n = new Set(prev);
+      n.delete(path);
+      return n;
+    });
+  };
+
+  const badge = (path: string) => {
+    if (!aiPaths.has(path)) return null;
+    return <IntakeAiBadge confidence={confMap.get(path) ?? 'medium'} />;
+  };
 
   const controlOptions = [
     'QA audits',
@@ -71,11 +141,27 @@ export function StepGovernance({ data, onNext, onBack, currentStep, totalSteps }
     setSaveError(null);
 
     const loaded = await loadEngagement(engagementId);
-    const existingIntakeData = loaded?.engagement?.intake_data ?? engagement?.intake_data ?? {};
+    const existingIntakeData = (loaded?.engagement?.intake_data ??
+      engagement?.intake_data ??
+      {}) as Record<string, unknown>;
+
+    const next = cloneIntake(existingIntakeData);
+    for (const p of initialAiPathsRef.current) {
+      if (!aiPaths.has(p)) removeConfidenceAtFieldPath(next, p);
+    }
+
+    const prevG =
+      typeof next.governance === 'object' && next.governance !== null
+        ? (next.governance as Record<string, unknown>)
+        : {};
+    const prevRisks = Array.isArray(prevG.risk_categories)
+      ? (prevG.risk_categories as Record<string, unknown>[])
+      : [];
 
     const riskCategories = (risks ?? [])
       .filter((r) => (r?.category ?? '').trim().length > 0)
-      .map((r) => ({
+      .map((r, i) => ({
+        ...(typeof prevRisks[i] === 'object' && prevRisks[i] !== null ? prevRisks[i] : {}),
         name: String(r.category).trim(),
         severity: toSeverityEnum(r.severity),
         zero_tolerance: false,
@@ -90,17 +176,17 @@ export function StepGovernance({ data, onNext, onBack, currentStep, totalSteps }
     }
 
     const newGovernanceObject = {
+      ...prevG,
       risk_categories: riskCategories,
-      escalation_paths: [],
+      escalation_paths: Array.isArray(prevG.escalation_paths) ? prevG.escalation_paths : [],
       controls_in_place: (controls ?? []).filter((c) => (c ?? '').trim().length > 0),
       wellness_support: (wellness ?? '').trim().length > 0,
-      // Preserve free-text details even though the structured schema is boolean.
       ...(incidents ? { incidents_notes: String(incidents) } : {}),
       ...(wellness ? { wellness_notes: String(wellness) } : {}),
     };
 
-    const mergedIntakeData = { ...existingIntakeData, governance: newGovernanceObject };
-    const { ok, error: updateErr } = await updateEngagement({ intake_data: mergedIntakeData });
+    next.governance = newGovernanceObject;
+    const { ok, error: updateErr } = await updateEngagement({ intake_data: next });
     if (!ok) {
       setSaveError(updateErr ?? 'Failed to save governance. Please try again.');
       setIsSaving(false);
@@ -116,7 +202,13 @@ export function StepGovernance({ data, onNext, onBack, currentStep, totalSteps }
     setRisks([...risks, { id: Date.now().toString(), category: '', severity: 'Low', escalationPath: '' }]);
   };
 
-  const updateRisk = (id: string, field: keyof Risk, value: any) => {
+  const updateRisk = (id: string, field: keyof Risk, value: string) => {
+    const idx = risks.findIndex((r) => r.id === id);
+    if (idx >= 0) {
+      if (field === 'category') clearAi(riskPath(idx, 'name'));
+      if (field === 'severity') clearAi(riskPath(idx, 'severity'));
+      if (field === 'escalationPath') clearAi(riskPath(idx, 'description'));
+    }
     setRisks(risks.map((risk) => (risk.id === id ? { ...risk, [field]: value } : risk)));
   };
 
@@ -177,7 +269,8 @@ export function StepGovernance({ data, onNext, onBack, currentStep, totalSteps }
                     key={risk.id}
                     className={`${index % 2 === 1 ? 'bg-[#FDF8F4]' : 'bg-white'} border-t border-[#161916]/8`}
                   >
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 align-top">
+                      <div className="flex flex-wrap gap-1 mb-1">{badge(riskPath(index, 'name'))}</div>
                       <input
                         type="text"
                         value={risk.category}
@@ -186,7 +279,8 @@ export function StepGovernance({ data, onNext, onBack, currentStep, totalSteps }
                         className="w-full h-9 px-2 border border-[#161916]/20 rounded text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
                       />
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 align-top">
+                      <div className="flex flex-wrap gap-1 mb-1">{badge(riskPath(index, 'severity'))}</div>
                       <select
                         value={risk.severity}
                         onChange={(e) => updateRisk(risk.id, 'severity', e.target.value)}
@@ -199,7 +293,8 @@ export function StepGovernance({ data, onNext, onBack, currentStep, totalSteps }
                         ))}
                       </select>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 align-top">
+                      <div className="flex flex-wrap gap-1 mb-1">{badge(riskPath(index, 'description'))}</div>
                       <input
                         type="text"
                         value={risk.escalationPath}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { StepEngagement } from './guided-steps/StepEngagement';
 import { StepHierarchy } from './guided-steps/StepHierarchy';
@@ -15,7 +15,14 @@ interface GuidedFormProps {
 
 export function GuidedForm({ onComplete, onBack }: GuidedFormProps) {
   const [currentStep, setCurrentStep] = useState(1);
-  const [formData, setFormData] = useState({});
+  const [formData, setFormData] = useState<Record<string, unknown>>({});
+
+  useEffect(() => {
+    const id = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
+    if (id) {
+      setFormData((prev) => ({ ...prev, engagementId: id }));
+    }
+  }, []);
 
   const steps = [
     { number: 1, label: 'Engagement', component: StepEngagement },

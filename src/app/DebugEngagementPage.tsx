@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { useEngagement } from "../hooks/useEngagement";
+import { aggregateByRole } from "../lib/roleAggregation";
 import { computeReadiness } from "../lib/readinessScoring";
 
 const TEST_ID = "e582ad1e-c52a-4256-b042-56ad9ecf5b6c";
@@ -17,6 +18,18 @@ export default function DebugEngagementPage() {
 
   const firstTaskId = useMemo(() => (tasks && tasks.length > 0 ? tasks[0]?.id : null), [tasks]);
   const readiness = useMemo(() => computeReadiness(engagement, tasks), [engagement, tasks]);
+
+  const hierarchy = useMemo(() => {
+    const intake = engagement?.intake_data;
+    if (!intake || typeof intake !== "object" || Array.isArray(intake)) return undefined;
+    const h = (intake as Record<string, unknown>).hierarchy;
+    return Array.isArray(h) ? h : undefined;
+  }, [engagement?.intake_data]);
+
+  const roleAggregates = useMemo(() => {
+    const list = Array.isArray(tasks) ? tasks : [];
+    return aggregateByRole(list as Record<string, unknown>[], hierarchy as Record<string, unknown>[] | undefined);
+  }, [tasks, hierarchy]);
 
   return (
     <div style={{ padding: 16, fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
@@ -79,6 +92,24 @@ export default function DebugEngagementPage() {
             null,
             2,
           )}
+        </pre>
+      </section>
+
+      <section style={{ marginBottom: 16 }}>
+        <h2 style={{ margin: "0 0 8px 0" }}>Role aggregation</h2>
+        <p style={{ margin: "0 0 8px 0", fontSize: 13, color: "#555" }}>
+          <code>aggregateByRole(tasks, engagement.intake_data.hierarchy)</code> — uses loaded tasks (including{" "}
+          <code>ai_allocation</code> / <code>user_allocation</code>). Output includes full task rows in{" "}
+          <code>retained_tasks</code> / <code>lost_tasks</code>.
+        </p>
+        {!hierarchy?.length ? (
+          <p style={{ margin: 0, fontSize: 13, color: "#666" }}>
+            No <code>intake_data.hierarchy</code> on this engagement — result is an empty array. Save the Hierarchy
+            step in the guided flow (or add hierarchy in Supabase) to see aggregates.
+          </p>
+        ) : null}
+        <pre style={{ background: "#f6f6f6", padding: 12, overflow: "auto", maxHeight: "70vh" }}>
+          {JSON.stringify(roleAggregates, null, 2)}
         </pre>
       </section>
 

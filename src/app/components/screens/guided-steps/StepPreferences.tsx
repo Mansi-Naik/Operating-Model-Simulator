@@ -1,9 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useEngagement } from '../../../../hooks/useEngagement';
+import { IntakeAiBadge } from '../../intake/IntakeAiBadge';
+import {
+  cloneIntake,
+  collectAiConfidenceByFieldPath,
+  removeConfidenceAtFieldPath,
+} from '../../../../lib/intakeAiUtils';
 
 interface StepPreferencesProps {
-  data: any;
-  onNext: (data: any) => void;
+  data: Record<string, unknown>;
+  onNext: (data: Record<string, unknown>) => void;
   onBack: () => void;
   currentStep: number;
   totalSteps: number;
@@ -22,12 +28,59 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [aiPaths, setAiPaths] = useState(() => new Set<string>());
+  const [confMap, setConfMap] = useState(() => new Map<string, 'high' | 'medium' | 'low'>());
+  const initialAiPathsRef = useRef(new Set<string>());
+  const hydratedIdRef = useRef<string | null>(null);
 
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
-  const engagementId = data?.engagementId ?? engagementIdFromUrl ?? null;
+  const engagementId = (data?.engagementId as string | undefined) ?? engagementIdFromUrl ?? null;
 
   const { engagement, updateEngagement, loadEngagement } = useEngagement(engagementId);
+
+  useEffect(() => {
+    if (!engagement?.id || !engagement.intake_data) return;
+    if (hydratedIdRef.current === engagement.id) return;
+    hydratedIdRef.current = engagement.id;
+
+    const intake = engagement.intake_data as Record<string, unknown>;
+    const p = (intake.preferences as Record<string, unknown>) || {};
+    if (typeof p.automation_appetite === 'string') setAutomationAppetite(p.automation_appetite);
+    if (typeof p.pod_design === 'string') setPodDesign(p.pod_design);
+    if (typeof p.risk_tolerance === 'string') setRiskTolerance(p.risk_tolerance);
+    if (typeof p.prefer_upskilling === 'boolean') setPreferUpskilling(p.prefer_upskilling);
+    if (typeof p.include_emergent_roles === 'boolean') setIncludeEmergentRoles(p.include_emergent_roles);
+    if (typeof p.currency === 'string') setCurrency(p.currency);
+    if (p.tech_build_cost_estimate != null) setTechBuildCostEstimate(String(p.tech_build_cost_estimate));
+    if (p.retraining_cost_per_fte != null) setRetrainingCostPerFte(String(p.retraining_cost_per_fte));
+    if (p.months_to_steady_state != null) setMonthsToSteadyState(String(p.months_to_steady_state));
+
+    const m = collectAiConfidenceByFieldPath(intake);
+    const pref = new Set<string>();
+    const cm = new Map<string, 'high' | 'medium' | 'low'>();
+    for (const [path, c] of m.entries()) {
+      if (!path.startsWith('preferences.')) continue;
+      pref.add(path);
+      cm.set(path, c);
+    }
+    setAiPaths(pref);
+    setConfMap(cm);
+    initialAiPathsRef.current = new Set(pref);
+  }, [engagement?.id, engagement?.intake_data]);
+
+  const clearPath = (path: string) => {
+    setAiPaths((prev) => {
+      const n = new Set(prev);
+      n.delete(path);
+      return n;
+    });
+  };
+
+  const badge = (path: string) => {
+    if (!aiPaths.has(path)) return null;
+    return <IntakeAiBadge confidence={confMap.get(path) ?? 'medium'} />;
+  };
 
   const parseNullableNumber = (value: string) => {
     const v = String(value ?? '').trim();
@@ -47,9 +100,22 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
     setSaveError(null);
 
     const loaded = await loadEngagement(engagementId);
-    const existingIntakeData = loaded?.engagement?.intake_data ?? engagement?.intake_data ?? {};
+    const existingIntakeData = (loaded?.engagement?.intake_data ??
+      engagement?.intake_data ??
+      {}) as Record<string, unknown>;
+
+    const next = cloneIntake(existingIntakeData);
+    for (const path of initialAiPathsRef.current) {
+      if (!aiPaths.has(path)) removeConfidenceAtFieldPath(next, path);
+    }
+
+    const prevPref =
+      typeof next.preferences === 'object' && next.preferences !== null
+        ? (next.preferences as Record<string, unknown>)
+        : {};
 
     const newPreferencesObject = {
+      ...prevPref,
       automation_appetite: automationAppetite,
       pod_design: podDesign,
       risk_tolerance: riskTolerance,
@@ -61,9 +127,10 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
       months_to_steady_state: parseNullableNumber(monthsToSteadyState),
     };
 
-    const mergedIntakeData = { ...existingIntakeData, preferences: newPreferencesObject };
+    next.preferences = newPreferencesObject;
+
     const { ok, error: updateErr } = await updateEngagement({
-      intake_data: mergedIntakeData,
+      intake_data: next,
       status: 'in_progress',
     });
     if (!ok) {
@@ -97,12 +164,16 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
       <div className="space-y-6">
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+            <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
               Automation appetite
+              {badge('preferences.automation_appetite')}
             </label>
             <select
               value={automationAppetite}
-              onChange={(e) => setAutomationAppetite(e.target.value)}
+              onChange={(e) => {
+                clearPath('preferences.automation_appetite');
+                setAutomationAppetite(e.target.value);
+              }}
               className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
             >
               <option value="conservative">Conservative</option>
@@ -112,12 +183,16 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
           </div>
 
           <div>
-            <label className="text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+            <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
               Pod design
+              {badge('preferences.pod_design')}
             </label>
             <select
               value={podDesign}
-              onChange={(e) => setPodDesign(e.target.value)}
+              onChange={(e) => {
+                clearPath('preferences.pod_design');
+                setPodDesign(e.target.value);
+              }}
               className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
             >
               <option value="conservative">Conservative</option>
@@ -129,12 +204,16 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+            <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
               Risk tolerance
+              {badge('preferences.risk_tolerance')}
             </label>
             <select
               value={riskTolerance}
-              onChange={(e) => setRiskTolerance(e.target.value)}
+              onChange={(e) => {
+                clearPath('preferences.risk_tolerance');
+                setRiskTolerance(e.target.value);
+              }}
               className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
             >
               <option value="low">Low</option>
@@ -144,12 +223,16 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
           </div>
 
           <div>
-            <label className="text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+            <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
               Currency
+              {badge('preferences.currency')}
             </label>
             <select
               value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
+              onChange={(e) => {
+                clearPath('preferences.currency');
+                setCurrency(e.target.value);
+              }}
               className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
             >
               <option value="USD">USD</option>
@@ -161,55 +244,75 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
         </div>
 
         <div className="flex flex-col gap-3">
-          <label className="flex items-center gap-3">
+          <label className="flex flex-wrap items-center gap-3">
             <input
               type="checkbox"
               checked={preferUpskilling}
-              onChange={(e) => setPreferUpskilling(e.target.checked)}
+              onChange={(e) => {
+                clearPath('preferences.prefer_upskilling');
+                setPreferUpskilling(e.target.checked);
+              }}
             />
             <span className="text-[14px] text-[#161916]">Prefer upskilling existing roles</span>
+            {badge('preferences.prefer_upskilling')}
           </label>
-          <label className="flex items-center gap-3">
+          <label className="flex flex-wrap items-center gap-3">
             <input
               type="checkbox"
               checked={includeEmergentRoles}
-              onChange={(e) => setIncludeEmergentRoles(e.target.checked)}
+              onChange={(e) => {
+                clearPath('preferences.include_emergent_roles');
+                setIncludeEmergentRoles(e.target.checked);
+              }}
             />
             <span className="text-[14px] text-[#161916]">Include emergent roles</span>
+            {badge('preferences.include_emergent_roles')}
           </label>
         </div>
 
         <div className="grid grid-cols-3 gap-4">
           <div>
-            <label className="text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+            <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
               Tech build cost estimate
+              {badge('preferences.tech_build_cost_estimate')}
             </label>
             <input
               type="number"
               value={techBuildCostEstimate}
-              onChange={(e) => setTechBuildCostEstimate(e.target.value)}
+              onChange={(e) => {
+                clearPath('preferences.tech_build_cost_estimate');
+                setTechBuildCostEstimate(e.target.value);
+              }}
               className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
             />
           </div>
           <div>
-            <label className="text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+            <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
               Retraining cost / FTE
+              {badge('preferences.retraining_cost_per_fte')}
             </label>
             <input
               type="number"
               value={retrainingCostPerFte}
-              onChange={(e) => setRetrainingCostPerFte(e.target.value)}
+              onChange={(e) => {
+                clearPath('preferences.retraining_cost_per_fte');
+                setRetrainingCostPerFte(e.target.value);
+              }}
               className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
             />
           </div>
           <div>
-            <label className="text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+            <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
               Months to steady state
+              {badge('preferences.months_to_steady_state')}
             </label>
             <input
               type="number"
               value={monthsToSteadyState}
-              onChange={(e) => setMonthsToSteadyState(e.target.value)}
+              onChange={(e) => {
+                clearPath('preferences.months_to_steady_state');
+                setMonthsToSteadyState(e.target.value);
+              }}
               className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
             />
           </div>

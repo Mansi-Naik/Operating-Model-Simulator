@@ -1,42 +1,98 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2, Copy, Sparkles } from 'lucide-react';
 import { useEngagement } from '../../../../hooks/useEngagement';
 
 interface Task {
   id: string;
+  dbId?: string;
   name: string;
   role: string;
   type: string;
   volume: number;
   handleTime: number;
+  source?: string;
+  touched?: boolean;
 }
 
 interface StepTasksProps {
-  data: any;
-  onNext: (data: any) => void;
+  data: Record<string, unknown>;
+  onNext: (data: Record<string, unknown>) => void;
   onBack: () => void;
   currentStep: number;
   totalSteps: number;
 }
 
+function taskTypeLabel(tt: string | null | undefined): string {
+  switch (String(tt || '').toLowerCase()) {
+    case 'rule-based':
+      return 'Rule-based';
+    case 'judgment':
+    case 'edge-case':
+      return 'Judgment-based';
+    case 'admin':
+      return 'Relationship';
+    case 'reporting':
+      return 'Creative';
+    default:
+      return 'Rule-based';
+  }
+}
+
+function mapDbTasksToRows(rows: Record<string, unknown>[]): Task[] {
+  return rows.map((t, idx) => ({
+    id: String(t.id ?? t.task_id ?? `row-${idx}`),
+    dbId: t.id != null && t.id !== '' ? String(t.id) : undefined,
+    name: String(t.task_name ?? ''),
+    role: String(t.role_performing ?? ''),
+    type: taskTypeLabel(t.task_type as string),
+    volume: typeof t.volume_per_day === 'number' ? t.volume_per_day : Number(t.volume_per_day) || 0,
+    handleTime: typeof t.avg_time_minutes === 'number' ? t.avg_time_minutes : Number(t.avg_time_minutes) || 0,
+    source: typeof t.source === 'string' ? t.source : 'user_provided',
+    touched: false,
+  }));
+}
+
 export function StepTasks({ data, onNext, onBack, currentStep, totalSteps }: StepTasksProps) {
   const [tasks, setTasks] = useState<Task[]>(
-    data?.tasks || [
+    (data?.tasks as Task[]) || [
       { id: '1', name: 'Review post', role: 'Agent', type: 'Rule-based', volume: 38000, handleTime: 3 },
-    ]
+    ],
   );
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const hydratedForRef = useRef<string | null>(null);
 
-  const { saveTasks, loadEngagement } = useEngagement(data?.engagementId);
+  const engagementIdFromUrl =
+    typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
+  const engagementId = (data?.engagementId as string | undefined) ?? engagementIdFromUrl ?? null;
+
+  const { saveTasks, loadEngagement } = useEngagement(engagementId);
+
+  useEffect(() => {
+    if (!engagementId) return;
+    let cancelled = false;
+    (async () => {
+      const r = await loadEngagement(engagementId);
+      if (cancelled) return;
+      if (hydratedForRef.current === engagementId) return;
+      const ts = r?.tasks ?? [];
+      if (ts.length > 0) {
+        hydratedForRef.current = engagementId;
+        setTasks(mapDbTasksToRows(ts as Record<string, unknown>[]));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [engagementId, loadEngagement]);
 
   const taskTypes = ['Rule-based', 'Judgment-based', 'Creative', 'Relationship'];
-  const roles = data?.roles?.map((r: any) => r.name) || ['Agent', 'Team Lead'];
+  const roles = (data?.roles as { name?: string }[] | undefined)?.map((r) => r.name).filter(Boolean) as string[];
+  const roleOptions = roles?.length ? roles : ['Agent', 'Team Lead'];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const engagementId = data?.engagementId;
     if (!engagementId) {
       setSaveError('Missing engagement id. Please go back and save the Engagement step first.');
       return;
@@ -69,6 +125,10 @@ export function StepTasks({ data, onNext, onBack, currentStep, totalSteps }: Ste
 
     const rows = filtered.map((t, idx) => {
       const n = String(idx + 1).padStart(3, '0');
+      let source = t.source || 'user_provided';
+      if (t.source === 'ai_extracted' && t.touched) source = 'ai_extracted_user_edited';
+      if (t.source === 'ai_extracted_user_edited') source = 'ai_extracted_user_edited';
+      if (!t.dbId) source = 'user_provided';
       return {
         task_id: `t_${n}`,
         task_name: (t.name ?? '').trim(),
@@ -80,7 +140,7 @@ export function StepTasks({ data, onNext, onBack, currentStep, totalSteps }: Ste
         consequence_of_error: null,
         data_logged: null,
         regulatory_constraint: false,
-        source: 'user_provided',
+        source,
       };
     });
 
@@ -99,12 +159,28 @@ export function StepTasks({ data, onNext, onBack, currentStep, totalSteps }: Ste
   const addTask = () => {
     setTasks([
       ...tasks,
-      { id: Date.now().toString(), name: '', role: '', type: 'Rule-based', volume: 0, handleTime: 0 },
+      {
+        id: Date.now().toString(),
+        name: '',
+        role: '',
+        type: 'Rule-based',
+        volume: 0,
+        handleTime: 0,
+        source: 'user_provided',
+        touched: false,
+      },
     ]);
   };
 
-  const updateTask = (id: string, field: keyof Task, value: any) => {
-    setTasks(tasks.map((task) => (task.id === id ? { ...task, [field]: value } : task)));
+  const updateTask = (id: string, field: keyof Task, value: string | number) => {
+    setTasks(
+      tasks.map((task) => {
+        if (task.id !== id) return task;
+        let touched = Boolean(task.touched);
+        if (task.source === 'ai_extracted') touched = true;
+        return { ...task, [field]: value, touched };
+      }),
+    );
   };
 
   const deleteTask = (id: string) => {
@@ -121,6 +197,9 @@ export function StepTasks({ data, onNext, onBack, currentStep, totalSteps }: Ste
         return 'bg-[#FDF8F4] text-[#494949]';
     }
   };
+
+  const showAiChip = (t: Task) =>
+    t.source === 'ai_extracted' || t.source === 'ai_extracted_user_edited';
 
   return (
     <form onSubmit={handleSubmit}>
@@ -170,12 +249,19 @@ export function StepTasks({ data, onNext, onBack, currentStep, totalSteps }: Ste
                 className={`${index % 2 === 1 ? 'bg-[#FDF8F4]' : 'bg-white'} border-t border-[#161916]/8 group`}
               >
                 <td className="px-4 py-3">
-                  <input
-                    type="text"
-                    value={task.name}
-                    onChange={(e) => updateTask(task.id, 'name', e.target.value)}
-                    className="w-full h-9 px-2 border border-[#161916]/20 rounded text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
-                  />
+                  <div className="flex items-center gap-2">
+                    {showAiChip(task) && (
+                      <span className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#FFF0DC] text-[#FFAB28] border border-[#FFAB28]/40">
+                        ✨ AI
+                      </span>
+                    )}
+                    <input
+                      type="text"
+                      value={task.name}
+                      onChange={(e) => updateTask(task.id, 'name', e.target.value)}
+                      className="w-full min-w-0 h-9 px-2 border border-[#161916]/20 rounded text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
+                    />
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   <select
@@ -184,7 +270,7 @@ export function StepTasks({ data, onNext, onBack, currentStep, totalSteps }: Ste
                     className="w-full h-9 px-2 border border-[#161916]/20 rounded text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
                   >
                     <option value="">Select role</option>
-                    {roles.map((role: string) => (
+                    {roleOptions.map((role: string) => (
                       <option key={role} value={role}>
                         {role}
                       </option>
@@ -208,7 +294,7 @@ export function StepTasks({ data, onNext, onBack, currentStep, totalSteps }: Ste
                   <input
                     type="number"
                     value={task.volume}
-                    onChange={(e) => updateTask(task.id, 'volume', parseInt(e.target.value))}
+                    onChange={(e) => updateTask(task.id, 'volume', parseInt(e.target.value, 10))}
                     className="w-24 h-9 px-2 border border-[#161916]/20 rounded text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
                   />
                 </td>
@@ -216,7 +302,7 @@ export function StepTasks({ data, onNext, onBack, currentStep, totalSteps }: Ste
                   <input
                     type="number"
                     value={task.handleTime}
-                    onChange={(e) => updateTask(task.id, 'handleTime', parseInt(e.target.value))}
+                    onChange={(e) => updateTask(task.id, 'handleTime', parseInt(e.target.value, 10))}
                     className="w-20 h-9 px-2 border border-[#161916]/20 rounded text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
                   />
                 </td>
@@ -245,7 +331,6 @@ export function StepTasks({ data, onNext, onBack, currentStep, totalSteps }: Ste
         Add Task Row
       </button>
 
-      {/* Navigation */}
       <div className="flex items-center justify-between mt-16 pt-8 border-t border-[#161916]/10">
         <button
           type="button"

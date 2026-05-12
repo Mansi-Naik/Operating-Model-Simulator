@@ -89,7 +89,7 @@ export function useEngagement(engagementId) {
           supabase
             .from("engagements")
             .select(
-              "id, client_name, domain, status, readiness_score, readiness_band, intake_mode, values_are_illustrative, intake_data, created_at, updated_at",
+              "id, client_name, domain, status, readiness_score, readiness_band, intake_mode, values_are_illustrative, intake_data, extraction_metadata, created_at, updated_at",
             )
             .eq("id", id)
             .maybeSingle(),
@@ -186,7 +186,7 @@ export function useEngagement(engagementId) {
           .update(updates ?? {})
           .eq("id", id)
           .select(
-            "id, client_name, domain, status, readiness_score, readiness_band, intake_mode, values_are_illustrative, intake_data, created_at, updated_at",
+            "id, client_name, domain, status, readiness_score, readiness_band, intake_mode, values_are_illustrative, intake_data, extraction_metadata, created_at, updated_at",
           )
           .maybeSingle();
 

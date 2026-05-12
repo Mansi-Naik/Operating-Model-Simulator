@@ -6,7 +6,11 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "dev:vercel": "vercel dev"
+    "dev:web": "vite",
+    "dev:vercel": "mkdir -p .vercel-global && vercel dev --global-config .vercel-global",
+    "dev:all": "mkdir -p .vercel-global && vercel dev --global-config .vercel-global",
+    "dev:all:debug": "mkdir -p .vercel-global && vercel dev --global-config .vercel-global --debug",
+    "test:task7": "node scripts/validate-task7-parsers.mjs"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -48,11 +52,14 @@
     "cmdk": "1.1.1",
     "date-fns": "3.6.0",
     "embla-carousel-react": "8.6.0",
+    "formidable": "^3.5.4",
     "input-otp": "1.4.2",
     "lucide-react": "0.487.0",
+    "mammoth": "^1.12.0",
     "motion": "12.23.24",
     "next": "^15.5.18",
     "next-themes": "0.4.6",
+    "pdf-parse": "^2.4.5",
     "react-day-picker": "8.10.1",
     "react-dnd": "16.0.1",
     "react-dnd-html5-backend": "16.0.1",
@@ -66,7 +73,8 @@
     "sonner": "2.0.3",
     "tailwind-merge": "3.2.0",
     "tw-animate-css": "1.3.8",
-    "vaul": "1.1.2"
+    "vaul": "1.1.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.12",
@@ -74,6 +82,7 @@
     "concurrently": "^9.2.1",
     "tailwindcss": "4.1.12",
     "typescript": "5.8.2",
+    "vercel": "^40.1.0",
     "vite": "^6.4.2"
   },
   "peerDependencies": {

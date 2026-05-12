@@ -1,0 +1,1 @@
+Acme Corp is a content moderation client. They have 100 agents handling 50000 items per day. They want to reduce costs by 25%. Current attrition is 35%. Geography: NAM and EMEA. Channels include chat and email. Primary goal is cost reduction with a 12 month timeline.

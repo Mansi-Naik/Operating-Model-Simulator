@@ -49,6 +49,14 @@ export default function App() {
     }
   };
 
+  const handleIntakeExtracted = () => {
+    setCurrentScreen('guided-form');
+  };
+
+  const handleStartGuidedEmpty = () => {
+    setCurrentScreen('guided-form');
+  };
+
   const handleFileUploaded = () => {
     setCurrentScreen('reconciliation');
   };
@@ -124,7 +132,14 @@ export default function App() {
   const renderScreen = () => {
     switch (currentScreen) {
       case 'mode-selector':
-        return <ModeSelector onModeSelect={handleModeSelect} hasDraft={false} />;
+        return (
+          <ModeSelector
+            onModeSelect={handleModeSelect}
+            onIntakeExtracted={handleIntakeExtracted}
+            onStartGuidedEmpty={handleStartGuidedEmpty}
+            hasDraft={false}
+          />
+        );
       case 'guided-form':
         return <GuidedForm onComplete={handleGuidedFormComplete} onBack={() => setCurrentScreen('mode-selector')} />;
       case 'upload':

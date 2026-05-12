@@ -1,6 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, X, HelpCircle } from 'lucide-react';
 import { useEngagement } from '../../../../hooks/useEngagement';
+import { IntakeAiBadge } from '../../intake/IntakeAiBadge';
+import {
+  cloneIntake,
+  collectAiConfidenceByFieldPath,
+  removeConfidenceAtFieldPath,
+} from '../../../../lib/intakeAiUtils';
 
 /** Supabase JSONB may deserialize as object or string; spreading a string breaks merge → invalid payloads. */
 function parseIntakeData(raw: unknown): Record<string, unknown> {
@@ -28,27 +34,108 @@ function toJsonSafeRecord(value: Record<string, unknown>): Record<string, unknow
 }
 
 interface StepTechStackProps {
-  data: any;
-  onNext: (data: any) => void;
+  data: Record<string, unknown>;
+  onNext: (data: Record<string, unknown>) => void;
   onBack: () => void;
   currentStep: number;
   totalSteps: number;
 }
 
+const SYSTEM_KEYS = [
+  'primary_work_platform',
+  'qa_audit_tool',
+  'ticketing',
+  'knowledge_base',
+  'workforce_management',
+  'reporting_bi',
+] as const;
+
+function maturityLabelFromEnum(e: unknown): string {
+  const s = String(e ?? '').toLowerCase();
+  if (s === 'low') return 'Basic';
+  if (s === 'medium') return 'Intermediate';
+  if (s === 'high') return 'Advanced';
+  return 'None';
+}
+
 export function StepTechStack({ data, onNext, onBack, currentStep, totalSteps }: StepTechStackProps) {
-  const [platforms, setPlatforms] = useState<string[]>(data?.platforms || []);
-  const [aiCapabilities, setAiCapabilities] = useState<any[]>(data?.aiCapabilities || []);
-  const [dataMaturity, setDataMaturity] = useState<string>(data?.dataMaturity || 'None');
+  const [platforms, setPlatforms] = useState<string[]>((data?.platforms as string[]) || []);
+  const [aiCapabilities, setAiCapabilities] = useState<
+    { capability: string; coverage: number; status: string }[]
+  >((data?.aiCapabilities as { capability: string; coverage: number; status: string }[]) || []);
+  const [dataMaturity, setDataMaturity] = useState<string>((data?.dataMaturity as string) || 'None');
   const [platformInput, setPlatformInput] = useState('');
+  const [privacyNotes, setPrivacyNotes] = useState('');
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [aiPaths, setAiPaths] = useState(() => new Set<string>());
+  const [confMap, setConfMap] = useState(() => new Map<string, 'high' | 'medium' | 'low'>());
+  const initialAiPathsRef = useRef(new Set<string>());
+  const hydratedIdRef = useRef<string | null>(null);
 
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
-  const engagementId = data?.engagementId ?? engagementIdFromUrl ?? null;
+  const engagementId = (data?.engagementId as string | undefined) ?? engagementIdFromUrl ?? null;
 
   const { engagement, updateEngagement, loadEngagement } = useEngagement(engagementId);
+
+  useEffect(() => {
+    if (!engagement?.id || !engagement.intake_data) return;
+    if (hydratedIdRef.current === engagement.id) return;
+    hydratedIdRef.current = engagement.id;
+
+    const intake = parseIntakeData(engagement.intake_data);
+    const ts = (intake.tech_stack as Record<string, unknown>) || {};
+    const cs = (ts.current_systems as Record<string, unknown>) || {};
+    const platList = SYSTEM_KEYS.map((k) => (typeof cs[k] === 'string' ? (cs[k] as string).trim() : '')).filter(
+      Boolean,
+    );
+    if (platList.length) setPlatforms(platList);
+
+    const ai = Array.isArray(ts.ai_in_use) ? ts.ai_in_use : [];
+    if (ai.length > 0) {
+      setAiCapabilities(
+        ai.map((row: Record<string, unknown>) => ({
+          capability: String(row.capability ?? ''),
+          coverage: typeof row.coverage_pct === 'number' ? row.coverage_pct : Number(row.coverage_pct) || 0,
+          status: String(row.notes ?? '').includes('status:')
+            ? String(row.notes).replace(/^status:\s*/i, '').trim() || 'Deployed'
+            : 'Deployed',
+        })),
+      );
+    }
+
+    setDataMaturity(maturityLabelFromEnum(ts.data_logging_maturity));
+    setPrivacyNotes(typeof ts.data_privacy_constraints === 'string' ? ts.data_privacy_constraints : '');
+
+    const m = collectAiConfidenceByFieldPath(intake);
+    const techPaths = new Set<string>();
+    const cm = new Map<string, 'high' | 'medium' | 'low'>();
+    for (const [p, c] of m.entries()) {
+      if (!p.startsWith('tech_stack.')) continue;
+      techPaths.add(p);
+      cm.set(p, c);
+    }
+    setAiPaths(techPaths);
+    setConfMap(cm);
+    initialAiPathsRef.current = new Set(techPaths);
+  }, [engagement?.id, engagement?.intake_data]);
+
+  const stripTechPrefix = (prefix: string) => {
+    setAiPaths((prev) => {
+      const n = new Set(prev);
+      for (const p of prev) {
+        if (p === prefix || p.startsWith(`${prefix}.`) || p.startsWith(`${prefix}[`)) n.delete(p);
+      }
+      return n;
+    });
+  };
+
+  const badgeFor = (path: string) => {
+    if (!aiPaths.has(path)) return null;
+    return <IntakeAiBadge confidence={confMap.get(path) ?? 'medium'} />;
+  };
 
   const toMaturityEnum = (label: string) => {
     switch ((label ?? '').toLowerCase()) {
@@ -68,13 +155,6 @@ export function StepTechStack({ data, onNext, onBack, currentStep, totalSteps }:
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     // Read FormData synchronously — after any `await`, React clears `e.currentTarget` and FormData breaks.
-    const form = e.currentTarget;
-    if (!(form instanceof HTMLFormElement)) {
-      setSaveError('Could not read form. Please try again.');
-      return;
-    }
-    const privacyNotes = new FormData(form).get('data_privacy_constraints');
-
     if (!engagementId) {
       setSaveError('Missing engagement id. Please go back and save the Engagement step first.');
       return;
@@ -90,6 +170,27 @@ export function StepTechStack({ data, onNext, onBack, currentStep, totalSteps }:
         loaded?.engagement?.intake_data ?? engagement?.intake_data,
       );
 
+      const nextRoot = cloneIntake(existingIntakeData);
+      for (const p of initialAiPathsRef.current) {
+        if (!aiPaths.has(p)) removeConfidenceAtFieldPath(nextRoot, p);
+      }
+
+      const prevTs =
+        typeof nextRoot.tech_stack === 'object' && nextRoot.tech_stack !== null
+          ? (nextRoot.tech_stack as Record<string, unknown>)
+          : {};
+      const prevCs =
+        typeof prevTs.current_systems === 'object' && prevTs.current_systems !== null
+          ? (prevTs.current_systems as Record<string, unknown>)
+          : {};
+
+      const current_systems: Record<string, unknown> = { ...prevCs };
+      SYSTEM_KEYS.forEach((k, i) => {
+        if (i < platforms.length && platforms[i] != null && String(platforms[i]).trim() !== '') {
+          current_systems[k] = platforms[i];
+        }
+      });
+
       const filteredAi = (aiCapabilities ?? [])
         .filter((c) => (c?.capability ?? '').trim().length > 0)
         .map((c) => ({
@@ -99,22 +200,22 @@ export function StepTechStack({ data, onNext, onBack, currentStep, totalSteps }:
           notes: c?.status ? `status: ${String(c.status)}` : '',
         }));
 
+      const prevAi = Array.isArray(prevTs.ai_in_use) ? (prevTs.ai_in_use as Record<string, unknown>[]) : [];
+      const mergedAi = filteredAi.map((row, i) => ({
+        ...(typeof prevAi[i] === 'object' && prevAi[i] !== null ? prevAi[i] : {}),
+        ...row,
+      }));
+
       const newTechStackObject = {
-        current_systems: {
-          primary_work_platform: platforms[0] ?? '',
-          qa_audit_tool: '',
-          ticketing: '',
-          knowledge_base: '',
-          workforce_management: '',
-          reporting_bi: '',
-        },
-        ai_in_use: filteredAi,
+        ...prevTs,
+        current_systems,
+        ai_in_use: mergedAi,
         data_logging_maturity: toMaturityEnum(dataMaturity),
-        data_privacy_constraints: typeof privacyNotes === 'string' ? privacyNotes : '',
+        data_privacy_constraints: privacyNotes,
       };
 
       const mergedIntakeData = toJsonSafeRecord({
-        ...existingIntakeData,
+        ...nextRoot,
         tech_stack: newTechStackObject,
       });
 
@@ -144,12 +245,14 @@ export function StepTechStack({ data, onNext, onBack, currentStep, totalSteps }:
 
   const addPlatform = () => {
     if (platformInput.trim()) {
+      stripTechPrefix('tech_stack.current_systems');
       setPlatforms([...platforms, platformInput.trim()]);
       setPlatformInput('');
     }
   };
 
   const removePlatform = (platform: string) => {
+    stripTechPrefix('tech_stack.current_systems');
     setPlatforms(platforms.filter((p) => p !== platform));
   };
 
@@ -169,9 +272,14 @@ export function StepTechStack({ data, onNext, onBack, currentStep, totalSteps }:
       <div className="space-y-8">
         {/* Current Platforms */}
         <div>
-          <label className="flex items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">
+          <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">
             Current Platforms
             <HelpCircle className="w-4 h-4 text-[#6D7069]" />
+            {(() => {
+              const p = [...aiPaths].find((x) => x.startsWith('tech_stack.current_systems'));
+              if (!p) return null;
+              return <IntakeAiBadge confidence={confMap.get(p) ?? 'medium'} />;
+            })()}
           </label>
           <div className="flex gap-2 mb-3">
             <input
@@ -218,6 +326,7 @@ export function StepTechStack({ data, onNext, onBack, currentStep, totalSteps }:
                   placeholder="e.g. Smart routing"
                   value={cap.capability}
                   onChange={(e) => {
+                    stripTechPrefix(`tech_stack.ai_in_use[${index}]`);
                     const newCaps = [...aiCapabilities];
                     newCaps[index].capability = e.target.value;
                     setAiCapabilities(newCaps);
@@ -229,6 +338,7 @@ export function StepTechStack({ data, onNext, onBack, currentStep, totalSteps }:
                   placeholder="Coverage %"
                   value={Number.isFinite(Number(cap.coverage)) ? cap.coverage : ''}
                   onChange={(e) => {
+                    stripTechPrefix(`tech_stack.ai_in_use[${index}]`);
                     const newCaps = [...aiCapabilities];
                     const v = e.target.value;
                     const n = parseInt(v, 10);
@@ -240,6 +350,7 @@ export function StepTechStack({ data, onNext, onBack, currentStep, totalSteps }:
                 <select
                   value={cap.status}
                   onChange={(e) => {
+                    stripTechPrefix(`tech_stack.ai_in_use[${index}]`);
                     const newCaps = [...aiCapabilities];
                     newCaps[index].status = e.target.value;
                     setAiCapabilities(newCaps);
@@ -265,15 +376,23 @@ export function StepTechStack({ data, onNext, onBack, currentStep, totalSteps }:
 
         {/* Data & Logging Maturity */}
         <div>
-          <label className="flex items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">
+          <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">
             Data & Logging Maturity
+            {badgeFor('tech_stack.data_logging_maturity')}
           </label>
           <div className="h-10 border border-[#161916]/15 rounded-md overflow-hidden flex">
             {maturityLevels.map((level) => (
               <button
                 key={level}
                 type="button"
-                onClick={() => setDataMaturity(level)}
+                onClick={() => {
+                  setAiPaths((prev) => {
+                    const n = new Set(prev);
+                    n.delete('tech_stack.data_logging_maturity');
+                    return n;
+                  });
+                  setDataMaturity(level);
+                }}
                 className={`
                   flex-1 text-[13px] font-semibold transition-colors
                   ${dataMaturity === level
@@ -290,13 +409,22 @@ export function StepTechStack({ data, onNext, onBack, currentStep, totalSteps }:
 
         {/* Additional Notes */}
         <div>
-          <label className="text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3 block">
+          <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">
             Additional notes on data logging or tooling
+            {badgeFor('tech_stack.data_privacy_constraints')}
           </label>
           <textarea
             name="data_privacy_constraints"
             rows={3}
-            defaultValue={data?.data_privacy_constraints || ''}
+            value={privacyNotes}
+            onChange={(e) => {
+              setAiPaths((prev) => {
+                const n = new Set(prev);
+                n.delete('tech_stack.data_privacy_constraints');
+                return n;
+              });
+              setPrivacyNotes(e.target.value);
+            }}
             placeholder="Optional notes..."
             className="w-full px-4 py-3 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none focus:ring-4 focus:ring-[#FD4E59]/15"
           />

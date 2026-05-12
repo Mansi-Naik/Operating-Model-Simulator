@@ -26,5 +26,7 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
-*.swpnode_modules/
-.next/
+*.swp
+
+# Vercel CLI local global config (used by npm run dev:all)
+.vercel-global/
