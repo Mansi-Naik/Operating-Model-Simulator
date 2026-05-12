@@ -5,7 +5,7 @@ import { applyCorsHeaders, resolveAllowedCorsOrigin } from '../src/lib/apiCors.j
 import { buildExtractionPrompt } from '../src/lib/extractionPrompt.js'
 import { createSupabaseAdmin } from '../src/lib/supabaseAdmin.js'
 
-const MODEL_ID = 'gemini-2.5-flash'
+const MODEL_ID = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 const FEATURE = 'f1_extraction'
 const MAX_BYTES = 10 * 1024 * 1024
 const MIN_TEXT = 50
@@ -287,6 +287,7 @@ export default async function handler(req, res) {
       generationConfig: {
         temperature: 0.1,
         responseMimeType: 'application/json',
+        maxOutputTokens: 16384,
       },
     })
 
