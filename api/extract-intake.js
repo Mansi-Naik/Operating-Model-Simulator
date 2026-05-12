@@ -1,8 +1,5 @@
 import fs from 'node:fs/promises'
 import formidable from 'formidable'
-import mammoth from 'mammoth'
-import * as XLSX from 'xlsx'
-import { PDFParse } from 'pdf-parse'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { applyCorsHeaders, resolveAllowedCorsOrigin } from '../src/lib/apiCors.js'
 import { buildExtractionPrompt } from '../src/lib/extractionPrompt.js'
@@ -54,18 +51,21 @@ function isAllowedFile(mime, origName) {
 }
 
 /**
- * @param {Buffer} buffer
- * @param {string} ext
+ * Lazy-load heavy parsers so cold starts for .txt do not pull in pdfjs / xlsx / mammoth
+ * (avoids Vercel FUNCTION_INVOCATION_FAILED on some runtimes).
  */
 async function bufferToPlainText(buffer, ext) {
   if (ext === '.txt' || ext === '.md') {
     return buffer.toString('utf8')
   }
   if (ext === '.docx') {
+    const mammothMod = await import('mammoth')
+    const mammoth = mammothMod.default ?? mammothMod
     const { value } = await mammoth.extractRawText({ buffer })
     return value ?? ''
   }
   if (ext === '.pdf') {
+    const { PDFParse } = await import('pdf-parse')
     const parser = new PDFParse({ data: buffer })
     try {
       const result = await parser.getText()
@@ -75,6 +75,7 @@ async function bufferToPlainText(buffer, ext) {
     }
   }
   if (ext === '.xlsx') {
+    const XLSX = await import('xlsx')
     const wb = XLSX.read(buffer, { type: 'buffer' })
     const parts = []
     for (const sheetName of wb.SheetNames) {
