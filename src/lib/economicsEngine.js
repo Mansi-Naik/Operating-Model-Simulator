@@ -487,6 +487,7 @@ export function computeCurrentState(engagement) {
  * }}
  */
 export function computeFutureState(engagement, f4SelectedVariant, f3Roles, preferences) {
+  console.log('[computeFutureState] f4SelectedVariant:', JSON.stringify(f4SelectedVariant, null, 2))
   void f3Roles
   const prefs = mergePreferences(engagement, preferences)
   const hierarchy = readHierarchy(engagement)
@@ -513,6 +514,19 @@ export function computeFutureState(engagement, f4SelectedVariant, f3Roles, prefe
   const podCount = nonNeg(rollup.pod_count)
   const explicitAiAuditors = nonNeg(rollup.total_ai_auditors ?? rollup.total_ai_output_auditors)
   const totalAiOps = nonNeg(rollup.total_ai_ops)
+  console.log('[computeFutureState] Reading total_agents:', rollup.total_agents)
+  console.log('[computeFutureState] Reading total_team_leads:', rollup.total_team_leads)
+  console.log('[computeFutureState] Reading other support roles:', {
+    total_central_qa: rollup.total_central_qa,
+    total_ai_ops: rollup.total_ai_ops,
+    total_ai_auditors: rollup.total_ai_auditors,
+    total_ai_output_auditors: rollup.total_ai_output_auditors,
+    total_sme: rollup.total_sme,
+    total_wfm: rollup.total_wfm,
+    total_unit_heads: rollup.total_unit_heads,
+    pod_count: rollup.pod_count,
+    total_headcount: rollup.total_headcount,
+  })
   const aiAuditors =
     explicitAiAuditors > 0
       ? explicitAiAuditors
@@ -545,6 +559,7 @@ export function computeFutureState(engagement, f4SelectedVariant, f3Roles, prefe
   const monthly_cost_usd = roleCost + monthly_tech_cost
   const headcount_total =
     nonNeg(rollup.total_headcount) || role_breakdown.reduce((sum, row) => sum + row.headcount, 0)
+  console.log('[computeFutureState] Calculated futureHeadcountTotal:', headcount_total)
   const volume = readVolumePerDay(engagement)
   const cost_per_item = volume > 0 ? monthly_cost_usd / (volume * WORKING_DAYS_PER_MONTH) : 0
 
