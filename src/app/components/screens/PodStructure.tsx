@@ -10,10 +10,12 @@ interface PodStructureProps {
   onBack?: () => void;
   onProceedToF5?: () => void;
   onGoToF3?: () => void;
+  initialScreen?: PodScreen;
+  f4Message?: string | null;
 }
 
-export function PodStructure({ onBack, onProceedToF5, onGoToF3 }: PodStructureProps) {
-  const [currentScreen, setCurrentScreen] = useState<PodScreen>('pre-run');
+export function PodStructure({ onBack, onProceedToF5, onGoToF3, initialScreen = 'pre-run', f4Message }: PodStructureProps) {
+  const [currentScreen, setCurrentScreen] = useState<PodScreen>(initialScreen);
   const [showMathDrawer, setShowMathDrawer] = useState(false);
 
   const renderScreen = () => {
@@ -31,6 +33,7 @@ export function PodStructure({ onBack, onProceedToF5, onGoToF3 }: PodStructurePr
           <F4_1_VariantSelector
             onViewOrgRollup={() => setCurrentScreen('org-rollup')}
             onShowMath={() => setShowMathDrawer(true)}
+            message={f4Message}
           />
         );
       case 'org-rollup':

@@ -5,10 +5,12 @@ import { F5_2_AssumptionEditor } from './economics/F5_2_AssumptionEditor';
 interface EconomicsProps {
   onBack?: () => void;
   onProceedToF6?: () => void;
+  onMissingF4Selection?: () => void;
 }
 
-export function Economics({ onBack, onProceedToF6 }: EconomicsProps) {
+export function Economics({ onBack, onProceedToF6, onMissingF4Selection }: EconomicsProps) {
   const [showAssumptionEditor, setShowAssumptionEditor] = useState(false);
+  const [assumptionVersion, setAssumptionVersion] = useState(0);
 
   return (
     <div className="relative h-full">
@@ -26,13 +28,22 @@ export function Economics({ onBack, onProceedToF6 }: EconomicsProps) {
           onEditAssumptions={() => setShowAssumptionEditor(true)}
           onBack={onBack}
           onProceedToF6={onProceedToF6}
+          onMissingF4Selection={onMissingF4Selection}
+          refreshKey={assumptionVersion}
         />
       </div>
 
       {/* Assumption Editor Drawer */}
       {showAssumptionEditor && (
         <div className="absolute top-0 right-0 h-full z-50 animate-slide-in-right">
-          <F5_2_AssumptionEditor onClose={() => setShowAssumptionEditor(false)} />
+          <F5_2_AssumptionEditor
+            onClose={() => setShowAssumptionEditor(false)}
+            onSaved={() => setAssumptionVersion((v) => v + 1)}
+            onApplied={() => {
+              setAssumptionVersion((v) => v + 1);
+              setShowAssumptionEditor(false);
+            }}
+          />
         </div>
       )}
     </div>

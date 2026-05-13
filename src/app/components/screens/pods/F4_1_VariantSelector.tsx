@@ -6,10 +6,12 @@ import { supabase } from '../../../../supabaseClient';
 
 type RiskProfile = 'low' | 'medium' | 'high';
 type VariantKey = 'conservative' | 'balanced' | 'aggressive';
+type RiskChip = 'LOW' | 'MED' | 'MED-HIGH';
 
 interface F4_1_VariantSelectorProps {
   onViewOrgRollup: () => void;
   onShowMath: () => void;
+  message?: string | null;
 }
 
 function variantKeyToRiskChip(key: string): RiskChip {
@@ -112,7 +114,7 @@ async function persistF4PodsSelection(
   return { ok: true };
 }
 
-export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath }: F4_1_VariantSelectorProps) {
+export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, message }: F4_1_VariantSelectorProps) {
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
 
@@ -349,6 +351,12 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath }: F4_1_Varia
           AI-synthesized team shape and span of control. Adjust constraints to explore variants.
         </p>
       </div>
+
+      {message ? (
+        <div className="mb-6 bg-[#FFF0DC] border-l-[3px] border-[#FFAB28] rounded-lg p-4 text-[14px] font-medium text-[#161916]">
+          {message}
+        </div>
+      ) : null}
 
       {error ? (
         <div className="mb-6 text-[14px] text-[#FD4E59] border border-[#FD4E59]/30 rounded-lg p-4 bg-[#FCE4D6]/30">

@@ -15,10 +15,13 @@ import { Timeline } from './components/screens/Timeline';
 import { Summary } from './components/screens/Summary';
 
 type Screen = 'mode-selector' | 'guided-form' | 'upload' | 'reconciliation' | 'readiness-review' | 'allocation-matrix' | 'future-roles' | 'pod-structure' | 'economics' | 'timeline' | 'summary' | 'locked';
+type PodStartScreen = 'pre-run' | 'variant-selector' | 'org-rollup';
 
 export default function App() {
   const [currentFeature, setCurrentFeature] = useState('f1');
   const [currentScreen, setCurrentScreen] = useState<Screen>('mode-selector');
+  const [podStartScreen, setPodStartScreen] = useState<PodStartScreen>('pre-run');
+  const [podMessage, setPodMessage] = useState<string | null>(null);
 
 
   const handleFeatureClick = (featureId: string) => {
@@ -31,6 +34,8 @@ export default function App() {
     } else if (featureId === 'f3') {
       setCurrentScreen('future-roles');
     } else if (featureId === 'f4') {
+      setPodStartScreen('pre-run');
+      setPodMessage(null);
       setCurrentScreen('pod-structure');
     } else if (featureId === 'f5') {
       setCurrentScreen('economics');
@@ -76,12 +81,21 @@ export default function App() {
 
   const handleProceedToF4 = () => {
     setCurrentFeature('f4');
+    setPodStartScreen('pre-run');
+    setPodMessage(null);
     setCurrentScreen('pod-structure');
   };
 
   const handleProceedToF5 = () => {
     setCurrentFeature('f5');
     setCurrentScreen('economics');
+  };
+
+  const handleMissingF4Selection = () => {
+    setCurrentFeature('f4');
+    setPodStartScreen('variant-selector');
+    setPodMessage('Select a pod variant in F4 first.');
+    setCurrentScreen('pod-structure');
   };
 
   const handleProceedToF6 = () => {
@@ -172,16 +186,25 @@ export default function App() {
       case 'pod-structure':
         return (
           <PodStructure
+            key={`${podStartScreen}-${podMessage ?? ''}`}
             onBack={() => setCurrentScreen('future-roles')}
             onProceedToF5={handleProceedToF5}
             onGoToF3={() => {
               setCurrentFeature('f3');
               setCurrentScreen('future-roles');
             }}
+            initialScreen={podStartScreen}
+            f4Message={podMessage}
           />
         );
       case 'economics':
-        return <Economics onBack={() => setCurrentScreen('pod-structure')} onProceedToF6={handleProceedToF6} />;
+        return (
+          <Economics
+            onBack={() => setCurrentScreen('pod-structure')}
+            onProceedToF6={handleProceedToF6}
+            onMissingF4Selection={handleMissingF4Selection}
+          />
+        );
       case 'timeline':
         return <Timeline onBack={() => setCurrentScreen('economics')} onProceedToF7={handleProceedToF7} />;
       case 'summary':
