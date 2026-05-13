@@ -78,10 +78,17 @@ function roleHc(result: Record<string, unknown>, role: string): number {
   return toNum(asObj(found).headcount);
 }
 
+function frontlineHc(result: Record<string, unknown>): number {
+  const rows = Array.isArray(result.role_breakdown) ? result.role_breakdown : [];
+  const exact = roleHc(result, 'Agent');
+  if (exact > 0) return exact;
+  return toNum(asObj(rows[0]).headcount);
+}
+
 function capacityPerFteLabel(currentState: Record<string, unknown>, futureState: Record<string, unknown>): string {
   const currentItems = toNum(currentState.items_per_day);
-  const currentHc = toNum(currentState.headcount_total);
-  const futureHc = toNum(futureState.headcount_total);
+  const currentHc = frontlineHc(currentState) || toNum(currentState.headcount_total);
+  const futureHc = frontlineHc(futureState) || toNum(futureState.headcount_total);
   const currentRatio = currentHc > 0 ? currentItems / currentHc : 0;
   const futureRatio = futureHc > 0 ? currentItems / futureHc : 0;
   const pct = currentRatio > 0 ? ((futureRatio - currentRatio) / currentRatio) * 100 : 0;
@@ -368,8 +375,8 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
   const monthlyCostDelta = toNum(futureState.monthly_cost_usd) - toNum(currentState.monthly_cost_usd);
   const costPerItemReduction = toNum(savings.cost_per_item_reduction_pct);
   const overheadDeltaPp = toNum(futureState.supervisor_overhead_pct) - toNum(currentState.supervisor_overhead_pct);
-  const agentToday = roleHc(currentState, 'Agent');
-  const agentFuture = roleHc(futureState, 'Agent');
+  const agentToday = frontlineHc(currentState);
+  const agentFuture = frontlineHc(futureState);
   const qualityText = `95% target met`;
   const capacityLabel = capacityPerFteLabel(currentState, futureState);
 

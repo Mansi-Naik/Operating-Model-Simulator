@@ -123,6 +123,23 @@ function tasksForRole(role, tasks) {
 }
 
 /**
+ * Uses today's role volume/headcount as a throughput floor when task-time inputs are conservative.
+ *
+ * @param {Record<string, unknown>} role
+ * @param {Record<string, unknown>[]} roleTasks
+ * @returns {number}
+ */
+function currentItemsPerAgentFromRole(role, roleTasks) {
+  const headcount = toNum(role.headcount ?? role.current_headcount ?? role.fte)
+  if (headcount <= 0) return 0
+  let volume = 0
+  for (const task of roleTasks) {
+    volume += taskVolume(task)
+  }
+  return volume > 0 ? volume / headcount : 0
+}
+
+/**
  * Picks the frontline agent role: lowest numeric `level`, then first in list.
  *
  * @param {unknown[]} hierarchy
@@ -311,7 +328,9 @@ export function computePodComposition(constraints, engagement, tasks) {
 
   const agentRole = pickPrimaryAgentRole(hierarchy) ?? /** @type {Record<string, unknown>} */ ({ role: 'Agent' })
   const cap = computeAgentCapacity(agentRole, tasks, {})
-  const itemsPerAgent = Math.max(0, cap.items_per_day_capacity)
+  const agentRoleTasks = tasksForRole(agentRole, tasks)
+  const calibratedItemsPerAgent = currentItemsPerAgentFromRole(agentRole, agentRoleTasks)
+  const itemsPerAgent = Math.max(0, cap.items_per_day_capacity, calibratedItemsPerAgent)
 
   const podCountRough = Math.max(1, volume / VOLUME_POD_HEURISTIC_DIVISOR)
   const volumePerPod = volume / podCountRough
@@ -349,6 +368,8 @@ export function computePodComposition(constraints, engagement, tasks) {
       target_span: targetSpan,
       max_pod_size: maxPod,
       derived_from_volume: derivedFromVolume,
+      modeled_items_per_agent_per_day: cap.items_per_day_capacity,
+      calibrated_items_per_agent_per_day: calibratedItemsPerAgent,
       items_per_agent_per_day: itemsPerAgent,
       pod_count_rough: podCountRough,
       volume_per_pod: volumePerPod,
