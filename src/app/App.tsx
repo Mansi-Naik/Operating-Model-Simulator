@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Header } from './components/Header';
 import { NavigationRail } from './components/NavigationRail';
 import { FooterStatusBar } from './components/FooterStatusBar';
@@ -17,12 +17,23 @@ import { Summary } from './components/screens/Summary';
 type Screen = 'mode-selector' | 'guided-form' | 'upload' | 'reconciliation' | 'readiness-review' | 'allocation-matrix' | 'future-roles' | 'pod-structure' | 'economics' | 'timeline' | 'summary' | 'locked';
 type PodStartScreen = 'pre-run' | 'variant-selector' | 'org-rollup';
 
+function engagementIdFromUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  return new URLSearchParams(window.location.search).get('engagementId');
+}
+
 export default function App() {
   const [currentFeature, setCurrentFeature] = useState('f1');
   const [currentScreen, setCurrentScreen] = useState<Screen>('mode-selector');
   const [podStartScreen, setPodStartScreen] = useState<PodStartScreen>('pre-run');
   const [podMessage, setPodMessage] = useState<string | null>(null);
+  const [activeEngagementId, setActiveEngagementId] = useState<string | null>(() => engagementIdFromUrl());
 
+  useEffect(() => {
+    const handlePopState = () => setActiveEngagementId(engagementIdFromUrl());
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   const handleFeatureClick = (featureId: string) => {
     setCurrentFeature(featureId);
@@ -54,11 +65,22 @@ export default function App() {
     }
   };
 
-  const handleIntakeExtracted = () => {
+  const handleIntakeExtracted = (engagementId?: string) => {
+    if (engagementId) setActiveEngagementId(engagementId);
     setCurrentScreen('guided-form');
   };
 
   const handleStartGuidedEmpty = () => {
+    setActiveEngagementId(null);
+    setCurrentScreen('guided-form');
+  };
+
+  const handleClientSwitch = (engagementId: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('engagementId', engagementId);
+    window.history.pushState({}, '', url.toString());
+    setActiveEngagementId(engagementId);
+    setCurrentFeature('f1');
     setCurrentScreen('guided-form');
   };
 
@@ -155,7 +177,13 @@ export default function App() {
           />
         );
       case 'guided-form':
-        return <GuidedForm onComplete={handleGuidedFormComplete} onBack={() => setCurrentScreen('mode-selector')} />;
+        return (
+          <GuidedForm
+            key={activeEngagementId ?? 'new'}
+            onComplete={handleGuidedFormComplete}
+            onBack={() => setCurrentScreen('mode-selector')}
+          />
+        );
       case 'upload':
         return <UploadMode onFileUploaded={handleFileUploaded} onBack={() => setCurrentScreen('mode-selector')} />;
       case 'reconciliation':
@@ -223,7 +251,7 @@ export default function App() {
 
   return (
     <div className="w-screen h-screen flex flex-col bg-white overflow-hidden">
-      <Header />
+      <Header activeEngagementId={activeEngagementId} onSelectEngagement={handleClientSwitch} />
 
       <div className="flex-1 flex overflow-hidden">
         <NavigationRail currentFeature={currentFeature} onFeatureClick={handleFeatureClick} />
