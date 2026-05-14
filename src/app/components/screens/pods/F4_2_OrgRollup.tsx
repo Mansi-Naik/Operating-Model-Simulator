@@ -183,7 +183,10 @@ export function F4_2_OrgRollup({ onBack, onShowMath, onProceedToF5, onRedirectTo
   const totalAiOps = Number(orgRollup?.total_ai_ops) || 0;
   const totalWfm = Number(orgRollup?.total_wfm) || 0;
 
-  const baseVolume = useMemo(() => readEngagementVolumePerDay(engagementRecord), [engagementRecord]);
+  const baseVolume = useMemo(() => {
+    const agentDemandVolume = Number(podComposition?.agent_demand_volume_per_day) || 0;
+    return agentDemandVolume > 0 ? agentDemandVolume : readEngagementVolumePerDay(engagementRecord);
+  }, [engagementRecord, podComposition]);
 
   const podCountsByMultiplier = useMemo(() => {
     const mults = [0.5, 1, 1.5, 2] as const;

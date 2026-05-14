@@ -1,7 +1,12 @@
 import { RefreshCw, Settings, Star, Check, ArrowRight, Calculator } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEngagement } from '../../../../hooks/useEngagement';
-import { generateThreeVariants, getF4SpanDefaultsFromEngagement, getSpanCapacityForIntakeRisk } from '../../../../lib/podSizing';
+import {
+  generateThreeVariants,
+  getF4SpanDefaultsFromEngagement,
+  getOperationalRiskProfileFromIntakeRisk,
+  getSpanCapacityForIntakeRisk,
+} from '../../../../lib/podSizing';
 import { supabase } from '../../../../supabaseClient';
 
 type RiskProfile = 'low' | 'medium' | 'high';
@@ -288,7 +293,8 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, message }: F
     }
 
     const constraintsSnapshot = {
-      risk_profile: riskProfile,
+      risk_profile: getOperationalRiskProfileFromIntakeRisk(riskProfile),
+      intake_risk_tolerance: riskProfile,
       target_span: targetSpan,
       max_pod_size: maxPodSize,
       must_include: mustInclude,

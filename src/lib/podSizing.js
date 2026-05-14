@@ -5,6 +5,7 @@
 import { getFinalAllocation } from './roleAggregation.js'
 
 const QA_CAPACITY_MINUTES = 6.5 * 60 // 390 — one QA FTE productive minutes (per spec)
+const AI_AUTOMATED_AUDIT_SAMPLE_RATE = 0.03
 const VOLUME_POD_HEURISTIC_DIVISOR = 6800 // rough items → pod count estimate
 
 const DEFAULT_AGENT_OPTIONS = Object.freeze({
@@ -15,7 +16,7 @@ const DEFAULT_AGENT_OPTIONS = Object.freeze({
 
 const DEFAULT_CONSTRAINTS = Object.freeze({
   max_pod_size: 15,
-  sampling_rate_pct: 5,
+  sampling_rate_pct: 1,
   qa_audit_time_minutes: 6,
 })
 
@@ -60,6 +61,15 @@ function automatedVolumePerDay(task) {
 }
 
 /**
+ * @param {Record<string, unknown> | null | undefined} task
+ * @returns {number} Daily volume agents still handle after F2 automation.
+ */
+function agentHandledVolumePerDay(task) {
+  if (!task || typeof task !== 'object') return 0
+  return finalAllocation(task) === 'tech-automated' ? 0 : toNum(task.volume_per_day)
+}
+
+/**
  * Per-task daily minutes consumed for capacity math (allocation-based; not × volume).
  *
  * @param {Record<string, unknown> | null | undefined} task
@@ -71,8 +81,7 @@ function taskConsumedMinutesPerSpec(task) {
   const alloc = finalAllocation(task)
   if (alloc === 'tech-automated') return 0
   if (alloc === 'tech-assisted') return avg * 0.7
-  if (alloc === 'human-only') return avg
-  return 0
+  return avg
 }
 
 /**
@@ -84,11 +93,12 @@ function weightedAvgItemMinutes(roleTasks) {
   for (const t of roleTasks) {
     if (!t || typeof t !== 'object') continue
     const alloc = finalAllocation(t)
-    if (alloc !== 'human-only' && alloc !== 'tech-assisted') continue
+    if (alloc === 'tech-automated') continue
     const v = taskVolume(t)
     const avg = toNum(t.avg_time_minutes)
+    const effectiveAvg = alloc === 'tech-assisted' ? avg * 0.7 : avg
     volSum += v
-    volTime += v * avg
+    volTime += v * effectiveAvg
   }
   return volSum > 0 ? volTime / volSum : 1
 }
@@ -137,6 +147,23 @@ function currentItemsPerAgentFromRole(role, roleTasks) {
     volume += taskVolume(task)
   }
   return volume > 0 ? volume / headcount : 0
+}
+
+/**
+ * @param {Record<string, unknown>[]} tasks
+ * @param {number} fallbackVolume
+ * @returns {number}
+ */
+function agentDemandVolumePerDay(tasks, fallbackVolume) {
+  const list = Array.isArray(tasks) ? tasks : []
+  if (list.length === 0) return fallbackVolume
+  let handled = 0
+  let total = 0
+  for (const task of list) {
+    total += taskVolume(task)
+    handled += agentHandledVolumePerDay(task)
+  }
+  return total > 0 ? handled : fallbackVolume
 }
 
 /**
@@ -320,6 +347,7 @@ export function computePodComposition(constraints, engagement, tasks) {
   const auditMin = toNum(c.qa_audit_time_minutes) || 6
 
   const volume = readEngagementVolumePerDay(engagement)
+  const list = Array.isArray(tasks) ? tasks : []
   const intake =
     engagement?.intake_data && typeof engagement.intake_data === 'object' && !Array.isArray(engagement.intake_data)
       ? /** @type {Record<string, unknown>} */ (engagement.intake_data)
@@ -329,11 +357,13 @@ export function computePodComposition(constraints, engagement, tasks) {
   const agentRole = pickPrimaryAgentRole(hierarchy) ?? /** @type {Record<string, unknown>} */ ({ role: 'Agent' })
   const cap = computeAgentCapacity(agentRole, tasks, {})
   const agentRoleTasks = tasksForRole(agentRole, tasks)
-  const calibratedItemsPerAgent = currentItemsPerAgentFromRole(agentRole, agentRoleTasks)
+  const sizingTasks = agentRoleTasks.length > 0 ? agentRoleTasks : list
+  const calibratedItemsPerAgent = currentItemsPerAgentFromRole(agentRole, sizingTasks)
   const itemsPerAgent = Math.max(0, cap.items_per_day_capacity, calibratedItemsPerAgent)
+  const agentDemandVolume = agentDemandVolumePerDay(sizingTasks, volume)
 
-  const podCountRough = Math.max(1, volume / VOLUME_POD_HEURISTIC_DIVISOR)
-  const volumePerPod = volume / podCountRough
+  const podCountRough = Math.max(1, agentDemandVolume / VOLUME_POD_HEURISTIC_DIVISOR)
+  const volumePerPod = agentDemandVolume / podCountRough
   const derivedFromVolume = itemsPerAgent > 0 ? volumePerPod / itemsPerAgent : maxPod
 
   const spanCandidates = [targetSpan, maxPod, derivedFromVolume].filter((x) => Number.isFinite(x) && x > 0)
@@ -342,25 +372,29 @@ export function computePodComposition(constraints, engagement, tasks) {
 
   const qaAuditsPerDay = agentsPerPod * (samplingPct / 100) * itemsPerAgent
   const rawQaFte = (qaAuditsPerDay * auditMin) / QA_CAPACITY_MINUTES
-  const qaPerPod = rawQaFte
+  const qaRatioCap = agentsPerPod / 12
+  const qaPerPod = Math.min(rawQaFte, qaRatioCap)
 
-  const list = Array.isArray(tasks) ? tasks : []
   let autoVolTotal = 0
   for (const t of list) {
     autoVolTotal += automatedVolumePerDay(t)
   }
-  const autoVolPerPod = autoVolTotal / podCountRough
-  const aiAuditorPerPod = (autoVolPerPod * 0.05) / QA_CAPACITY_MINUTES
 
   const smePerPod = 0.15
   const wfmPerPod = 0.1
   const podCapacityPerDay = agentsPerPod * itemsPerAgent
 
-  const spanRisk = riskToleranceToSpanRiskProfile(readRiskTolerance(engagement))
+  const riskRaw = typeof c.risk_profile === 'string' ? c.risk_profile.trim().toLowerCase() : ''
+  const spanRisk =
+    riskRaw === 'low' || riskRaw === 'medium' || riskRaw === 'high'
+      ? /** @type {'low' | 'medium' | 'high'} */ (riskRaw)
+      : riskToleranceToSpanRiskProfile(readRiskTolerance(engagement))
   const span = computeSpanCapacity(spanRisk)
 
-  const rawPodCount = podCapacityPerDay > 0 ? volume / podCapacityPerDay : podCountRough
-  const finalPodCount = computePodCount(volume, podCapacityPerDay)
+  const rawPodCount = podCapacityPerDay > 0 ? agentDemandVolume / podCapacityPerDay : podCountRough
+  const finalPodCount = computePodCount(agentDemandVolume, podCapacityPerDay)
+  const autoVolPerPod = finalPodCount > 0 ? autoVolTotal / finalPodCount : 0
+  const aiAuditorPerPod = (autoVolPerPod * AI_AUTOMATED_AUDIT_SAMPLE_RATE) / QA_CAPACITY_MINUTES
 
   const calculation_trace = {
     agents_formula: `min(target_span=${targetSpan}, max_pod_size=${maxPod}, derived_from_volume=${round4(derivedFromVolume)}) → ${agentsPerPod}`,
@@ -373,14 +407,17 @@ export function computePodComposition(constraints, engagement, tasks) {
       items_per_agent_per_day: itemsPerAgent,
       pod_count_rough: podCountRough,
       volume_per_pod: volumePerPod,
+      total_volume_per_day: volume,
+      agent_demand_volume_per_day: agentDemandVolume,
       agent_role_used: roleNameFromHierarchyRow(agentRole),
     },
-    qa_formula: `(${round4(qaAuditsPerDay)} audits/day × ${auditMin} min) / ${QA_CAPACITY_MINUTES} QA min = ${round4(rawQaFte)} FTE`,
+    qa_formula: `min((${round4(qaAuditsPerDay)} audits/day × ${auditMin} min) / ${QA_CAPACITY_MINUTES} QA min, agents_per_pod / 12) = ${round4(qaPerPod)} FTE`,
     qa_inputs: {
       audits_per_day: qaAuditsPerDay,
       audit_minutes: auditMin,
       qa_capacity_minutes: QA_CAPACITY_MINUTES,
       raw_fte: rawQaFte,
+      qa_ratio_cap: qaRatioCap,
       rounded_fte: qaPerPod,
       sampling_rate_pct: samplingPct,
       agents_per_pod: agentsPerPod,
@@ -389,13 +426,14 @@ export function computePodComposition(constraints, engagement, tasks) {
     ai_auditor_inputs: {
       automated_volume_total: autoVolTotal,
       automated_volume_per_pod: autoVolPerPod,
-      formula: `(${round4(autoVolPerPod)} × 0.05) / ${QA_CAPACITY_MINUTES}`,
+      formula: `(${round4(autoVolPerPod)} × ${AI_AUTOMATED_AUDIT_SAMPLE_RATE}) / ${QA_CAPACITY_MINUTES}`,
       ai_auditor_per_pod: aiAuditorPerPod,
     },
     span_lookup_used: { risk_profile: spanRisk, recommended_range: span },
-    pod_count_formula: `${volume} / ${round4(podCapacityPerDay)} = ${round4(rawPodCount)} → ceil = ${finalPodCount}`,
+    pod_count_formula: `${round4(agentDemandVolume)} agent-handled items / ${round4(podCapacityPerDay)} = ${round4(rawPodCount)} → ceil = ${finalPodCount}`,
     pod_count_inputs: {
       total_volume: volume,
+      agent_demand_volume: agentDemandVolume,
       pod_capacity: podCapacityPerDay,
       raw_count: rawPodCount,
       final_count: finalPodCount,
@@ -406,6 +444,8 @@ export function computePodComposition(constraints, engagement, tasks) {
   return {
     agents_per_pod: agentsPerPod,
     derived_from_volume: derivedFromVolume,
+    total_volume_per_day: volume,
+    agent_demand_volume_per_day: agentDemandVolume,
     qa_per_pod: qaPerPod,
     ai_auditor_per_pod: aiAuditorPerPod,
     sme_per_pod: smePerPod,
@@ -486,8 +526,21 @@ export function getSpanCapacityForIntakeRisk(intakeRiskTolerance) {
     intakeRiskTolerance === 'low' || intakeRiskTolerance === 'medium' || intakeRiskTolerance === 'high'
       ? intakeRiskTolerance
       : 'medium'
-  const spanRisk = riskToleranceToSpanRiskProfile(t)
-  return computeSpanCapacity(spanRisk)
+  return computeSpanCapacity(getOperationalRiskProfileFromIntakeRisk(t))
+}
+
+/**
+ * Operational risk profile used by span and pod math for an intake risk tolerance.
+ *
+ * @param {'low' | 'medium' | 'high'} intakeRiskTolerance
+ * @returns {'low' | 'medium' | 'high'}
+ */
+export function getOperationalRiskProfileFromIntakeRisk(intakeRiskTolerance) {
+  const t =
+    intakeRiskTolerance === 'low' || intakeRiskTolerance === 'medium' || intakeRiskTolerance === 'high'
+      ? intakeRiskTolerance
+      : 'medium'
+  return riskToleranceToSpanRiskProfile(t)
 }
 
 /**
@@ -524,7 +577,8 @@ export function generateThreeVariants(engagement, tasks, options) {
     tolOverride === 'low' || tolOverride === 'medium' || tolOverride === 'high'
       ? /** @type {'low' | 'medium' | 'high'} */ (tolOverride)
       : readRiskTolerance(engagement)
-  const span = getSpanCapacityForIntakeRisk(tol)
+  const spanRisk = getOperationalRiskProfileFromIntakeRisk(tol)
+  const span = computeSpanCapacity(spanRisk)
 
   const maxPodRaw = toNum(oc.max_pod_size)
   const maxPod = maxPodRaw > 0 ? maxPodRaw : DEFAULT_CONSTRAINTS.max_pod_size
@@ -532,6 +586,8 @@ export function generateThreeVariants(engagement, tasks, options) {
   const baseConstraints = {
     max_pod_size: maxPod,
     qa_audit_time_minutes: DEFAULT_CONSTRAINTS.qa_audit_time_minutes,
+    risk_profile: spanRisk,
+    intake_risk_tolerance: tol,
   }
 
   let balancedTarget = span.recommended
@@ -542,9 +598,9 @@ export function generateThreeVariants(engagement, tasks, options) {
 
   /** @type {{ key: string, display: string, target: number, sampling: number, recommended?: boolean, aiMult?: number }[]} */
   const defs = [
-    { key: 'conservative', display: 'Conservative', target: span.min, sampling: 6, aiMult: 1 },
-    { key: 'balanced', display: 'Balanced', target: balancedTarget, sampling: 5, recommended: true, aiMult: 1 },
-    { key: 'aggressive', display: 'Aggressive', target: span.max, sampling: 4, aiMult: 1.5 },
+    { key: 'conservative', display: 'Conservative', target: span.min, sampling: 1.5, aiMult: 1 },
+    { key: 'balanced', display: 'Balanced', target: balancedTarget, sampling: 1, recommended: true, aiMult: 1 },
+    { key: 'aggressive', display: 'Aggressive', target: span.max, sampling: 0.75, aiMult: 1.5 },
   ]
 
   const out = []
@@ -572,7 +628,7 @@ export function generateThreeVariants(engagement, tasks, options) {
       }
     }
 
-    const vol = readEngagementVolumePerDay(engagement)
+    const vol = toNum(podComposition.agent_demand_volume_per_day) || readEngagementVolumePerDay(engagement)
     const cap = toNum(podComposition.pod_capacity_per_day)
     const pods = computePodCount(vol, cap)
     const orgRollup = computeOrgRollup(podComposition, pods, engagement)
