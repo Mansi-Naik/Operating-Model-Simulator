@@ -98,8 +98,11 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
             onCancel={handleCancel}
             onBack={() => setCurrentScreen('pre-run')}
             engagementId={generationInput.engagementId}
-            onComplete={(result) => {
+            onComplete={async (result) => {
               setGenerationResult(result);
+              if (generationInput.engagementId) {
+                await loadEngagement(generationInput.engagementId);
+              }
               setCurrentScreen('matrix-view');
             }}
           />
@@ -112,6 +115,7 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
               onReRun={handleReRun}
               onBack={() => setCurrentScreen('pre-run')}
               onProceedToF3={onProceedToF3}
+              generationResult={generationResult}
               engagementId={generationInput.engagementId}
             />
           </>

@@ -23,6 +23,13 @@ interface F2_2_MatrixViewProps {
   onBack?: () => void;
   onProceedToF3?: () => void;
   engagementId?: string | null;
+  generationResult?: { processedTaskIds: string[]; failedTaskIds: string[]; total: number } | null;
+}
+
+function finalAllocation(row: any): string {
+  const user = typeof row?.user_allocation === 'string' ? row.user_allocation.trim() : '';
+  if (user) return user;
+  return typeof row?.ai_allocation === 'string' ? row.ai_allocation.trim() : '';
 }
 
 export function F2_2_MatrixView({
@@ -31,6 +38,7 @@ export function F2_2_MatrixView({
   onBack,
   onProceedToF3,
   engagementId,
+  generationResult,
 }: F2_2_MatrixViewProps) {
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
@@ -51,7 +59,7 @@ export function F2_2_MatrixView({
   const [showAdvisoriesExpanded, setShowAdvisoriesExpanded] = useState(false);
 
   const tasksForAdvisories = useMemo(() => {
-    return (Array.isArray(dbTasks) ? dbTasks : []).filter((row: any) => row?.ai_allocation);
+    return (Array.isArray(dbTasks) ? dbTasks : []).filter((row: any) => finalAllocation(row));
   }, [dbTasks]);
 
   const advisories = useMemo(() => {
@@ -68,7 +76,7 @@ export function F2_2_MatrixView({
   }, [advisories]);
 
   const tasks: Task[] = useMemo(() => {
-    const source = (Array.isArray(dbTasks) ? dbTasks : []).filter((row: any) => row?.ai_allocation);
+    const source = (Array.isArray(dbTasks) ? dbTasks : []).filter((row: any) => finalAllocation(row));
     return source.map((row: any, index: number) => {
       const chosenAlloc = String(row?.user_allocation ?? row?.ai_allocation ?? '').toLowerCase();
       const isLocked = row?.regulatory_constraint === true;
@@ -107,6 +115,9 @@ export function F2_2_MatrixView({
       };
     });
   }, [dbTasks]);
+  const allTaskRows = Array.isArray(dbTasks) ? dbTasks : [];
+  const matrixReady = allTaskRows.length > 0 && allTaskRows.every((row: any) => finalAllocation(row));
+  const failedCount = generationResult?.failedTaskIds?.length ?? 0;
   const roleOptions = useMemo(() => ['All', ...Array.from(new Set(tasks.map((t) => t.role)))], [tasks]);
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
@@ -406,10 +417,18 @@ export function F2_2_MatrixView({
 
       {/* Proceed to F3 */}
       {onProceedToF3 && (
-        <div className="mt-8 flex justify-end">
+        <div className="mt-8 flex flex-col items-end gap-2">
+          {!matrixReady ? (
+            <div className="text-[13px] text-[#6D7069]">
+              {failedCount > 0
+                ? `${failedCount} task${failedCount === 1 ? '' : 's'} still need allocation. Re-run F2 to fill them.`
+                : 'Waiting for allocation results to finish saving...'}
+            </div>
+          ) : null}
           <button
             onClick={onProceedToF3}
-            className="h-11 px-8 bg-[#FD4E59] text-white text-[15px] font-semibold rounded-lg hover:bg-[#FD4E59]/90"
+            disabled={!matrixReady}
+            className="h-11 px-8 bg-[#FD4E59] text-white text-[15px] font-semibold rounded-lg hover:bg-[#FD4E59]/90 disabled:opacity-50 disabled:pointer-events-none"
           >
             Proceed to Roles →
           </button>

@@ -6,7 +6,7 @@ interface F2_1_GenerationProps {
   onCancel: () => void;
   onBack?: () => void;
   engagementId?: string | null;
-  onComplete?: (result: { processedTaskIds: string[]; failedTaskIds: string[]; total: number }) => void;
+  onComplete?: (result: { processedTaskIds: string[]; failedTaskIds: string[]; total: number }) => void | Promise<void>;
 }
 
 export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: F2_1_GenerationProps) {
@@ -135,7 +135,7 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
       if (cancelRef.current) return;
       setCalibrationDone(true);
       setValidationDone(true);
-      onComplete?.({ processedTaskIds, failedTaskIds, total: rows.length });
+      await onComplete?.({ processedTaskIds, failedTaskIds, total: rows.length });
     };
 
     void run();

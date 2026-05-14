@@ -1,4 +1,4 @@
-import { aggregateByRole } from './roleAggregation';
+import { aggregateByRole, getFinalAllocation } from './roleAggregation';
 import { generateAdvisories } from './advisoryGeneration';
 
 export type RolePatternKey = 'minor_evolution' | 'meaningful_shift' | 'transformation' | 'redefinition';
@@ -30,13 +30,13 @@ function isRolePatternKey(p: string): p is RolePatternKey {
 }
 
 /**
- * True when every task row has a non-empty model allocation (F2 complete).
+ * True when every task row has a non-empty final allocation (F2 complete).
+ * User overrides count because F2 treats them as the source of truth.
  */
 export function tasksHaveF2Predictions(taskList: unknown[] | null | undefined): boolean {
   if (!Array.isArray(taskList) || taskList.length === 0) return false;
   return taskList.every((t) => {
-    const row = t as { ai_allocation?: unknown };
-    return typeof row?.ai_allocation === 'string' && row.ai_allocation.trim().length > 0;
+    return getFinalAllocation(t as Record<string, unknown>).trim().length > 0;
   });
 }
 
