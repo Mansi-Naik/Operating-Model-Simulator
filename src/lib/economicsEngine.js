@@ -4,7 +4,6 @@
 
 const WORKING_DAYS_PER_MONTH = 22
 const DEFAULT_AI_AUDITOR_COST = 3500
-const DEFAULT_AI_OPS_COST = 4000
 const DEFAULT_SME_COST = 5500
 const DEFAULT_WFM_COST = 3000
 const DEFAULT_LLM_TOOLING_COST = 8000
@@ -244,6 +243,72 @@ function normalizeFutureAgents(rawAgents, frontline, f3Roles, currentHeadcountTo
   const freedPct = Math.min(80, Math.max(0, toNum(redesign?.time_freed_pct)))
   const inferred = currentFrontline > 0 ? currentFrontline * (1 - freedPct / 100) : rawAgents
   return { value: Math.max(0, inferred), normalized: currentFrontline > 0 }
+}
+
+/**
+ * @param {unknown} tasks
+ * @returns {Record<string, unknown>[]}
+ */
+function normalizeTaskArray(tasks) {
+  return Array.isArray(tasks)
+    ? tasks.filter((x) => x && typeof x === 'object').map((x) => /** @type {Record<string, unknown>} */ (x))
+    : []
+}
+
+/**
+ * @param {Record<string, unknown>} task
+ * @returns {number}
+ */
+function taskVolume(task) {
+  return nonNeg(task.volume_per_day)
+}
+
+/**
+ * Estimates the share of frontline volume removed from agent demand by F2 full automation.
+ *
+ * @param {Record<string, unknown>[]} tasks
+ * @param {Record<string, unknown> | null} frontline
+ * @returns {number}
+ */
+function automatedFrontlineVolumePct(tasks, frontline) {
+  const frontlineName = frontline ? roleName(frontline).trim().toLowerCase() : ''
+  const matching = frontlineName
+    ? tasks.filter((t) => String(t.role_performing ?? '').trim().toLowerCase() === frontlineName)
+    : []
+  const source = matching.length > 0 ? matching : tasks
+  let total = 0
+  let automated = 0
+  for (const task of source) {
+    const vol = taskVolume(task)
+    total += vol
+    if (finalAllocation(task) === 'tech-automated') automated += vol
+  }
+  return total > 0 ? Math.min(100, Math.max(0, (automated / total) * 100)) : 0
+}
+
+/**
+ * @param {number} rawAgents
+ * @param {Record<string, unknown> | null} frontline
+ * @param {Record<string, unknown>[]} f3Roles
+ * @param {Record<string, unknown>[]} tasks
+ * @param {number} currentHeadcountTotal
+ * @returns {{ value: number, normalized: boolean }}
+ */
+function canonicalFutureAgents(rawAgents, frontline, f3Roles, tasks, currentHeadcountTotal) {
+  const currentFrontline = frontline ? roleHeadcount(frontline) : 0
+  const autoPct = automatedFrontlineVolumePct(tasks, frontline)
+  const redesign = f3RedesignForHierarchyRole(f3Roles, frontline)
+  const f3FreedPct = Math.min(80, Math.max(0, toNum(redesign?.time_freed_pct)))
+  const reductionPct = Math.max(autoPct, f3FreedPct)
+
+  if (currentFrontline > 0 && reductionPct > 0) {
+    const inferred = currentFrontline * (1 - reductionPct / 100)
+    if (rawAgents >= currentFrontline || rawAgents > inferred * 1.25) {
+      return { value: Math.max(0, inferred), normalized: true }
+    }
+  }
+
+  return normalizeFutureAgents(rawAgents, frontline, f3Roles, currentHeadcountTotal)
 }
 
 /**
@@ -521,6 +586,7 @@ export function computeCurrentState(engagement) {
  * @param {Record<string, unknown> | null | undefined} f4SelectedVariant Selected variant row, or full `f4_pods` payload.
  * @param {unknown} f3Roles Redesign array or `{ redesigns }` bundle (accepted for API symmetry; costs come from F4).
  * @param {Record<string, unknown> | null | undefined} preferences Cost assumptions and tooling assumptions.
+ * @param {unknown} [tasks] Optional task rows, used only to normalize legacy pre-fix F4 rollups.
  * @returns {{
  *   monthly_cost_usd: number,
  *   headcount_total: number,
@@ -530,13 +596,23 @@ export function computeCurrentState(engagement) {
  *   role_breakdown: Array<{ role: string, headcount: number, cost_per_fte: number, total_cost: number, change_vs_today: number }>
  * }}
  */
-export function computeFutureState(engagement, f4SelectedVariant, f3Roles, preferences) {
+export function computeFutureState(engagement, f4SelectedVariant, f3Roles, preferences, tasks) {
   const f3RoleRows = normalizeF3RolesArray(f3Roles)
+  const taskRows = normalizeTaskArray(tasks)
   const prefs = mergePreferences(engagement, preferences)
   const hierarchy = readHierarchy(engagement)
   const variant = resolveSelectedVariant(f4SelectedVariant)
   const rollup = orgRollupFromVariant(variant)
   const podComposition = podCompositionFromVariant(variant)
+  const shouldDebug = prefs.suppress_future_debug !== true
+
+  if (shouldDebug) {
+    console.log('[computeFutureState] Inputs:', {
+      f4_org_rollup: rollup,
+      intake_hierarchy: readIntake(engagement).hierarchy,
+    })
+    console.log('[computeFutureState] Future role breakdown being built:')
+  }
 
   const frontline = frontlineRole(hierarchy)
   const tl = teamLeadRole(hierarchy)
@@ -550,64 +626,52 @@ export function computeFutureState(engagement, f4SelectedVariant, f3Roles, prefe
   const qaCost = nonNeg(prefs.qa_cost_per_fte) || (qa ? roleCostPerFte(qa) : tlCost)
   const unitHeadCost = unitHead ? roleCostPerFte(unitHead) : tlCost
   const aiAuditorCost = nonNeg(prefs.ai_auditor_cost_per_fte) || DEFAULT_AI_AUDITOR_COST
-  const aiOpsCost = nonNeg(prefs.ai_ops_cost_per_fte) || DEFAULT_AI_OPS_COST
   const smeCost = nonNeg(prefs.sme_cost_per_fte) || (smeToday ? roleCostPerFte(smeToday) : DEFAULT_SME_COST)
   const wfmCost = nonNeg(prefs.wfm_cost_per_fte) || (wfmToday ? roleCostPerFte(wfmToday) : DEFAULT_WFM_COST)
 
   const rawPodCount = nonNeg(rollup.pod_count)
-  const explicitAiAuditors = nonNeg(rollup.total_ai_auditors ?? rollup.total_ai_output_auditors)
-  const totalAiOps = nonNeg(rollup.total_ai_ops)
   const currentHeadcountTotal = hierarchy.reduce((sum, row) => sum + roleHeadcount(row), 0)
-  const normalizedAgents = normalizeFutureAgents(nonNeg(rollup.total_agents), frontline, f3RoleRows, currentHeadcountTotal)
+  const normalizedAgents = canonicalFutureAgents(
+    nonNeg(rollup.total_agents),
+    frontline,
+    f3RoleRows,
+    taskRows,
+    currentHeadcountTotal,
+  )
   const agentsPerPod = nonNeg(podComposition.agents_per_pod)
   const podCount =
     normalizedAgents.normalized && normalizedAgents.value > 0 && agentsPerPod > 0
       ? Math.max(1, Math.ceil(normalizedAgents.value / agentsPerPod))
       : rawPodCount
   const teamLeads = normalizedAgents.normalized ? podCount : nonNeg(rollup.total_team_leads)
-  const centralQa = normalizedAgents.normalized
-    ? nonNeg(podComposition.qa_per_pod) * podCount
-    : nonNeg(rollup.total_central_qa)
+  const qaPerPodRaw = podCount > 0 ? nonNeg(rollup.total_central_qa) / podCount : nonNeg(podComposition.qa_per_pod)
+  const qaRatioCap = agentsPerPod > 0 ? agentsPerPod / 12 : normalizedAgents.value / 12
+  const qaPerPod = qaRatioCap > 0 ? Math.min(nonNeg(qaPerPodRaw), qaRatioCap) : nonNeg(qaPerPodRaw)
+  const centralQa = normalizedAgents.normalized ? qaPerPod * podCount : Math.min(nonNeg(rollup.total_central_qa), normalizedAgents.value / 12)
   const sme = normalizedAgents.normalized ? nonNeg(podComposition.sme_per_pod) * podCount : nonNeg(rollup.total_sme)
   const wfm = normalizedAgents.normalized ? nonNeg(podComposition.wfm_per_pod) * podCount : nonNeg(rollup.total_wfm)
-  const aiAuditors =
-    normalizedAgents.normalized && nonNeg(podComposition.ai_auditor_per_pod) > 0
-      ? nonNeg(podComposition.ai_auditor_per_pod) * podCount
-      : explicitAiAuditors > 0
-      ? explicitAiAuditors
-      : nonNeg(podComposition.ai_auditor_per_pod) > 0 && podCount > 0 && totalAiOps <= 0
-        ? nonNeg(podComposition.ai_auditor_per_pod) * podCount
-        : 0
-  const aiOps = normalizedAgents.normalized ? 0 : totalAiOps
+  const aiAuditors = nonNeg(rollup.total_ai_auditors ?? rollup.total_ai_output_auditors ?? rollup.total_ai_ops)
 
-  const role_breakdown = [
-    futureBreakdownRow('Agent', normalizedAgents.value, agentCost, frontline ? roleHeadcount(frontline) : 0),
-    futureBreakdownRow('Team Lead', teamLeads, tlCost, tl ? roleHeadcount(tl) : 0),
-    futureBreakdownRow('Central QA', centralQa, qaCost, qa ? roleHeadcount(qa) : 0),
-  ]
-
-  if (aiAuditors > 0) {
-    role_breakdown.push(futureBreakdownRow('AI Output Auditor', aiAuditors, aiAuditorCost, 0))
-  }
-  if (aiOps > 0) {
-    role_breakdown.push(futureBreakdownRow('AI Ops', aiOps, aiOpsCost, 0))
+  /** @type {Array<{ role: string, headcount: number, cost_per_fte: number, total_cost: number, change_vs_today: number }>} */
+  const role_breakdown = []
+  const addFutureRole = (role, headcount, cost, todayHeadcount, source) => {
+    const row = futureBreakdownRow(role, headcount, cost, todayHeadcount)
+    role_breakdown.push(row)
+    if (shouldDebug) console.log('[computeFutureState] Future role:', { ...row, source })
   }
 
-  role_breakdown.push(
-    futureBreakdownRow('SME', sme, smeCost, smeToday ? roleHeadcount(smeToday) : 0),
-    futureBreakdownRow('WFM', wfm, wfmCost, wfmToday ? roleHeadcount(wfmToday) : 0),
-    futureBreakdownRow('Unit Head', nonNeg(rollup.total_unit_heads) || 1, unitHeadCost, unitHead ? roleHeadcount(unitHead) : 0),
-  )
+  addFutureRole('Agent', normalizedAgents.value, agentCost, frontline ? roleHeadcount(frontline) : 0, 'f4.org_rollup.total_agents')
+  addFutureRole('Team Lead', teamLeads, tlCost, tl ? roleHeadcount(tl) : 0, 'f4.org_rollup.total_team_leads')
+  addFutureRole('Central QA', centralQa, qaCost, qa ? roleHeadcount(qa) : 0, 'f4.org_rollup.total_central_qa')
+  addFutureRole('AI Output Auditor', aiAuditors, aiAuditorCost, 0, 'f4.org_rollup.total_ai_ops')
+  addFutureRole('SME', sme, smeCost, smeToday ? roleHeadcount(smeToday) : 0, 'f4.org_rollup.total_sme')
+  addFutureRole('WFM', wfm, wfmCost, wfmToday ? roleHeadcount(wfmToday) : 0, 'f4.org_rollup.total_wfm')
+  addFutureRole('Unit Head', nonNeg(rollup.total_unit_heads) || 1, unitHeadCost, unitHead ? roleHeadcount(unitHead) : 0, 'f4.org_rollup.total_unit_heads')
 
   const monthly_tech_cost = nonNeg(prefs.llm_tooling_monthly_cost) || DEFAULT_LLM_TOOLING_COST
   const roleCost = role_breakdown.reduce((sum, row) => sum + row.total_cost, 0)
   const monthly_cost_usd = roleCost + monthly_tech_cost
-  const summedHeadcount = role_breakdown.reduce((sum, row) => sum + row.headcount, 0)
-  const rawHeadcount = nonNeg(rollup.total_headcount)
-  const headcount_total =
-    rawHeadcount > 0 && !normalizedAgents.normalized && rawHeadcount <= Math.max(currentHeadcountTotal * 1.5, 1)
-      ? rawHeadcount
-      : summedHeadcount
+  const headcount_total = role_breakdown.reduce((sum, row) => sum + row.headcount, 0)
   const volume = readVolumePerDay(engagement)
   const cost_per_item = volume > 0 ? monthly_cost_usd / (volume * WORKING_DAYS_PER_MONTH) : 0
 
@@ -853,9 +917,10 @@ export function computeIRR(transitionCost, monthlySteadyStateSavings, horizonMon
 export function computeSensitivity(engagement, f4SelectedVariant, f3Roles, baseAssumptions) {
   const basePrefs = mergePreferences(engagement, baseAssumptions)
   const tasks = basePrefs.tasks
+  const quietPrefs = { ...basePrefs, suppress_future_debug: true }
   const current = computeCurrentState(engagement)
   const baseVariant = resolveSelectedVariant(f4SelectedVariant)
-  const baseFuture = computeFutureState(engagement, baseVariant, f3Roles, basePrefs)
+  const baseFuture = computeFutureState(engagement, baseVariant, f3Roles, quietPrefs, tasks)
   const baseSavings = computeSavings(current, baseFuture)
 
   const automationBase =
@@ -869,13 +934,15 @@ export function computeSensitivity(engagement, f4SelectedVariant, f3Roles, baseA
     engagement,
     variantWithAutomationAdjustedAgents(baseVariant, automationBase, automationLow),
     f3Roles,
-    basePrefs,
+    quietPrefs,
+    tasks,
   )
   const autoHighFuture = computeFutureState(
     engagement,
     variantWithAutomationAdjustedAgents(baseVariant, automationBase, automationHigh),
     f3Roles,
-    basePrefs,
+    quietPrefs,
+    tasks,
   )
 
   const hierarchy = readHierarchy(engagement)
@@ -884,14 +951,26 @@ export function computeSensitivity(engagement, f4SelectedVariant, f3Roles, baseA
     nonNeg(basePrefs.agent_fully_loaded_cost) || (front ? roleCostPerFte(front) : 0)
   const agentCostLow = agentCostBase * 0.8
   const agentCostHigh = agentCostBase * 1.2
-  const agentLowFuture = computeFutureState(engagement, baseVariant, f3Roles, {
-    ...basePrefs,
-    agent_fully_loaded_cost: agentCostLow,
-  })
-  const agentHighFuture = computeFutureState(engagement, baseVariant, f3Roles, {
-    ...basePrefs,
-    agent_fully_loaded_cost: agentCostHigh,
-  })
+  const agentLowFuture = computeFutureState(
+    engagement,
+    baseVariant,
+    f3Roles,
+    {
+      ...quietPrefs,
+      agent_fully_loaded_cost: agentCostLow,
+    },
+    tasks,
+  )
+  const agentHighFuture = computeFutureState(
+    engagement,
+    baseVariant,
+    f3Roles,
+    {
+      ...quietPrefs,
+      agent_fully_loaded_cost: agentCostHigh,
+    },
+    tasks,
+  )
 
   const monthsBase = nonNeg(basePrefs.months_to_steady_state) || DEFAULT_MONTHS_TO_STEADY
   const monthsLow = Math.max(1, monthsBase * 0.8)
@@ -953,7 +1032,7 @@ export function computeSensitivity(engagement, f4SelectedVariant, f3Roles, baseA
 export function runFullEconomics(engagement, tasks, f4SelectedVariant, f3Roles, preferences) {
   const prefs = mergePreferences(engagement, preferences)
   const current_state = computeCurrentState(engagement)
-  const future_state = computeFutureState(engagement, f4SelectedVariant, f3Roles, prefs)
+  const future_state = computeFutureState(engagement, f4SelectedVariant, f3Roles, prefs, tasks)
   const savings = computeSavings(current_state, future_state)
   const transition_cost = computeTransitionCost(engagement, future_state, {
     ...prefs,
