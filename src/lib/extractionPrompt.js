@@ -14,9 +14,9 @@ The document was uploaded by a consultant and may be: a scoping doc, a proposal,
 
 SECTION B — CRITICAL ANTI-HALLUCINATION INSTRUCTIONS
 Apply these rules strictly:
-1. If a field is not clearly stated in the document, leave it null. Do not guess or infer values that aren't supported by the text.
+1. For most fields, leave null if not stated. EXCEPTION: For task-level fields task_type, input_data_type, consequence_of_error, data_logged, and regulatory_constraint, you MUST infer values based on the task description and standard BPO operations knowledge. These fields drive downstream feature logic and cannot be null. Mark them with _confidence: "medium" when inferred.
 2. For numeric fields, only extract numbers that are clearly stated (e.g., "we have 100 agents"). Do not estimate.
-3. For enum fields (severity, task_type, etc.), only pick a value if the document clearly implies it. Otherwise leave null.
+3. For enum fields outside task-level task_type, input_data_type, and consequence_of_error, only pick a value if the document clearly implies it. Otherwise leave null.
 4. Tag every extracted field with a confidence level: "high" (clearly stated), "medium" (implied but not stated directly), "low" (rough inference). Fields you can't extract should be omitted entirely, not given a "low" confidence guess.
 5. If the document is clearly not a business engagement document (e.g., it's a recipe, news article, meeting transcript unrelated to BPO/operations), set document_relevance_score below 0.3 and extract minimal data. Do not pretend to extract from irrelevant text.
 
@@ -99,6 +99,45 @@ tasks: array of {
   data_logged: boolean | null,
   regulatory_constraint: boolean | null
 }
+
+For task extraction, you MUST infer these fields based on the task description, even when they are not explicitly stated:
+
+input_data_type — Inferred from what the task operates on:
+- Reviewing posts, comments, articles → "unstructured_text"
+- Analyzing call recordings, voice → "unstructured_voice"
+- Reviewing images, photos → "unstructured_image"
+- Reviewing videos → "unstructured_video"
+- Compiling reports, calculations, dashboards → "structured"
+- Coaching conversations (text-based) → "unstructured_text"
+- Tasks involving multiple types (e.g., reviewing posts with images) → "mixed"
+- Default if unclear: "mixed"
+
+consequence_of_error — Inferred from task name and context:
+- Spam filtering, routing, reporting on standard data → "low"
+- Standard policy enforcement, sample audits → "medium"
+- Severe content (violence, hate), high-stakes decisions → "high"
+- CSAM, terrorism, regulatory-mandated tasks, precedent-setting → "critical"
+- Default if unclear: "medium"
+
+data_logged — Inferred from operational context:
+- Mention of WFM, QA tools, ticketing systems, dashboards → true
+- High-volume operational work in BPO context → true (defaults to true)
+- Coaching conversations, qualitative work → false
+- Calibration sessions, undocumented work → false
+- Default if unclear: true (BPO operations are typically logged)
+
+task_type — Inferred from task verb and structure:
+- "Review against policy", "classify", "disposition" → "rule-based"
+- "Assess", "interpret", "evaluate", "audit" → "judgment"
+- "Escalate severe", "handle exception" → "edge-case"
+- "Compile report", "generate dashboard" → "reporting"
+- "Set up", "configure", "administer" → "admin"
+
+regulatory_constraint — Inferred:
+- Task mentions "mandatory human review", "regulatory", "jurisdictional law", "CSAM", "terrorism" → true
+- Otherwise → false
+
+Set the _confidence suffix to "medium" for inferred values (not "low" or null), since these inferences are based on standard BPO operations knowledge.
 
 SECTION D — FIELD-LEVEL CONFIDENCE TRACKING
 For every field you extract, also add a sibling key with the suffix "_confidence" set to "high", "medium", or "low". Example:
