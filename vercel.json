@@ -17,6 +17,9 @@
     },
     "api/generate-sensitivity-narrative.js": {
       "maxDuration": 60
+    },
+    "api/generate-phase-narratives.js": {
+      "maxDuration": 60
     }
   }
 }

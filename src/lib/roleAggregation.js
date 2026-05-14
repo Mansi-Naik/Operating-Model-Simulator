@@ -188,7 +188,7 @@ function buildRoleAggregate(roleTasks, role_name, level, current_headcount, curr
 
     minutesByTaskName[label] = (minutesByTaskName[label] ?? 0) + mins
 
-    const finalAllocation = getFinalAllocation(t)
+    const finalAllocation = getFinalAllocation(t) || 'human-only'
 
     if (finalAllocation === 'tech-automated') {
       lost_tasks.push(t)

@@ -207,7 +207,6 @@ function SavingsCurveChart({ curve, paybackMonth }: { curve: Record<string, unkn
 
 export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedToF6, onMissingF4Selection, refreshKey = 0 }: F5_1_EconomicsDashboardProps) {
   void onBack;
-  void onProceedToF6;
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
 
@@ -219,6 +218,7 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
   const [f4Pods, setF4Pods] = useState<Record<string, unknown> | null>(null);
   const [assumptionsUsed, setAssumptionsUsed] = useState<Record<string, unknown>>({});
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [hasSavedEconomics, setHasSavedEconomics] = useState(false);
   const [sensitivityNarrative, setSensitivityNarrative] = useState('Generating analysis...');
   const [narrativePending, setNarrativePending] = useState(false);
 
@@ -248,7 +248,9 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
     setPipelineId(typeof data?.id === 'string' ? data.id : null);
     setF3Roles(normalizeF3Roles(data?.f3_roles).redesigns as Record<string, unknown>[]);
     setF4Pods(parseF4Pods(data?.f4_pods));
-    setAssumptionsUsed(asObj(asObj(data?.f5_economics).assumptions_used));
+    const savedEconomics = asObj(data?.f5_economics);
+    setAssumptionsUsed(asObj(savedEconomics.assumptions_used));
+    setHasSavedEconomics(Boolean(savedEconomics.economics_result));
     setPipelineLoading(false);
   }, [engagementIdFromUrl, refreshKey]);
 
@@ -309,6 +311,7 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
       if (pipelineId) {
         const { error } = await supabase.from('pipeline_runs').update({ f5_economics: payload }).eq('id', pipelineId);
         if (!cancelled && error) setSaveError(error.message);
+        if (!cancelled && !error) setHasSavedEconomics(true);
         return;
       }
       const { error } = await supabase.from('pipeline_runs').insert({
@@ -316,6 +319,7 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
         f5_economics: payload,
       });
       if (!cancelled && error) setSaveError(error.message);
+      if (!cancelled && !error) setHasSavedEconomics(true);
     })();
     return () => {
       cancelled = true;
@@ -642,6 +646,19 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
             className="h-11 px-6 bg-[#FD4E59] text-white text-[15px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2"
           >
             Edit assumptions
+            <ArrowRight className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="mt-8 flex justify-end">
+          <button
+            type="button"
+            onClick={onProceedToF6}
+            disabled={!hasSavedEconomics}
+            title={!hasSavedEconomics ? 'Compute economics first.' : undefined}
+            className="h-12 px-8 bg-[#FD4E59] text-white text-[15px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2 shadow-sm disabled:opacity-50 disabled:pointer-events-none"
+          >
+            Proceed to Timeline
             <ArrowRight className="w-5 h-5" />
           </button>
         </div>

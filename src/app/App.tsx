@@ -234,7 +234,14 @@ export default function App() {
           />
         );
       case 'timeline':
-        return <Timeline onBack={() => setCurrentScreen('economics')} onProceedToF7={handleProceedToF7} />;
+        return (
+          <Timeline
+            onBack={() => setCurrentScreen('economics')}
+            onGoToF3={() => setCurrentScreen('future-roles')}
+            onGoToF5={() => setCurrentScreen('economics')}
+            onProceedToF7={handleProceedToF7}
+          />
+        );
       case 'summary':
         return <Summary onBack={() => setCurrentScreen('timeline')} />;
       default:

@@ -12,7 +12,7 @@ interface Task {
   recommended: 'AUTO' | 'ASSIST' | 'HUMAN';
   confidence: number | null;
   confidenceText: string;
-  source: 'AI' | 'USER' | 'LOCKED';
+  source: 'AI' | 'USER' | 'LOCKED' | 'DEFAULT';
   isLocked?: boolean;
   allocationValue: 'tech-automated' | 'tech-assisted' | 'human-only';
 }
@@ -30,6 +30,12 @@ function finalAllocation(row: any): string {
   const user = typeof row?.user_allocation === 'string' ? row.user_allocation.trim() : '';
   if (user) return user;
   return typeof row?.ai_allocation === 'string' ? row.ai_allocation.trim() : '';
+}
+
+function effectiveAllocation(row: any): 'tech-automated' | 'tech-assisted' | 'human-only' {
+  const alloc = finalAllocation(row).toLowerCase();
+  if (alloc === 'tech-automated' || alloc === 'tech-assisted' || alloc === 'human-only') return alloc;
+  return 'human-only';
 }
 
 export function F2_2_MatrixView({
@@ -76,11 +82,12 @@ export function F2_2_MatrixView({
   }, [advisories]);
 
   const tasks: Task[] = useMemo(() => {
-    const source = (Array.isArray(dbTasks) ? dbTasks : []).filter((row: any) => finalAllocation(row));
+    const source = Array.isArray(dbTasks) ? dbTasks : [];
     return source.map((row: any, index: number) => {
-      const chosenAlloc = String(row?.user_allocation ?? row?.ai_allocation ?? '').toLowerCase();
+      const chosenAlloc = effectiveAllocation(row);
       const isLocked = row?.regulatory_constraint === true;
       const hasUserOverride = typeof row?.user_allocation === 'string' && row.user_allocation.trim().length > 0;
+      const hasAiAllocation = typeof row?.ai_allocation === 'string' && row.ai_allocation.trim().length > 0;
       const recommended: Task['recommended'] =
         isLocked || chosenAlloc === 'human-only'
           ? 'HUMAN'
@@ -100,7 +107,9 @@ export function F2_2_MatrixView({
         ? 'LOCKED'
         : hasUserOverride
         ? 'USER'
-        : 'AI';
+        : hasAiAllocation
+        ? 'AI'
+        : 'DEFAULT';
       return {
         id: String(row?.id ?? `row-${index}`),
         number: String(index + 1).padStart(2, '0'),
@@ -116,8 +125,9 @@ export function F2_2_MatrixView({
     });
   }, [dbTasks]);
   const allTaskRows = Array.isArray(dbTasks) ? dbTasks : [];
-  const matrixReady = allTaskRows.length > 0 && allTaskRows.every((row: any) => finalAllocation(row));
-  const failedCount = generationResult?.failedTaskIds?.length ?? 0;
+  const hasAnySavedAllocation = allTaskRows.some((row: any) => finalAllocation(row));
+  const matrixReady = allTaskRows.length > 0 && (hasAnySavedAllocation || Boolean(generationResult?.total));
+  const fallbackCount = allTaskRows.filter((row: any) => !finalAllocation(row)).length;
   const roleOptions = useMemo(() => ['All', ...Array.from(new Set(tasks.map((t) => t.role)))], [tasks]);
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
@@ -168,7 +178,7 @@ export function F2_2_MatrixView({
     return 'text-[#FD4E59]';
   };
 
-  const getSourceIcon = (source: 'AI' | 'USER' | 'LOCKED') => {
+  const getSourceIcon = (source: 'AI' | 'USER' | 'LOCKED' | 'DEFAULT') => {
     switch (source) {
       case 'AI':
         return (
@@ -189,6 +199,12 @@ export function F2_2_MatrixView({
           <div className="flex items-center gap-1 text-[#6D7069]">
             <Lock className="w-3.5 h-3.5" />
             <span className="text-[12px]">LOCKED</span>
+          </div>
+        );
+      case 'DEFAULT':
+        return (
+          <div className="flex items-center gap-1 text-[#6D7069]">
+            <span className="text-[12px]">DEFAULT</span>
           </div>
         );
     }
@@ -420,9 +436,11 @@ export function F2_2_MatrixView({
         <div className="mt-8 flex flex-col items-end gap-2">
           {!matrixReady ? (
             <div className="text-[13px] text-[#6D7069]">
-              {failedCount > 0
-                ? `${failedCount} task${failedCount === 1 ? '' : 's'} still need allocation. Re-run F2 to fill them.`
-                : 'Waiting for allocation results to finish saving...'}
+              Waiting for allocation results to finish saving...
+            </div>
+          ) : fallbackCount > 0 ? (
+            <div className="text-[13px] text-[#6D7069]">
+              {fallbackCount} task{fallbackCount === 1 ? '' : 's'} defaulted to HUMAN because no saved allocation was returned.
             </div>
           ) : null}
           <button

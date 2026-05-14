@@ -35,9 +35,7 @@ function isRolePatternKey(p: string): p is RolePatternKey {
  */
 export function tasksHaveF2Predictions(taskList: unknown[] | null | undefined): boolean {
   if (!Array.isArray(taskList) || taskList.length === 0) return false;
-  return taskList.every((t) => {
-    return getFinalAllocation(t as Record<string, unknown>).trim().length > 0;
-  });
+  return taskList.some((t) => getFinalAllocation(t as Record<string, unknown>).trim().length > 0);
 }
 
 function getHierarchy(engagement: Record<string, unknown> | null | undefined): unknown[] {
