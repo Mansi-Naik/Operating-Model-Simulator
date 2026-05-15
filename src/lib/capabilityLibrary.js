@@ -31,11 +31,25 @@
  */
 
 /**
+ * @typedef {'exact' | 'partial' | 'speculative'} MatchQuality
+ */
+
+/**
+ * @typedef {{
+ *   capability: Capability,
+ *   match_quality: MatchQuality,
+ *   match_reasons: string[]
+ * }} CapabilityMatch
+ */
+
+/**
  * @typedef {{
  *   input_data_type: InputDataType | string | null | undefined,
  *   task_type: TaskType | string | null | undefined,
  *   consequence_of_error: ConsequenceLevel | string | null | undefined,
- *   task_name?: string | null
+ *   task_name?: string | null,
+ *   regulatory_constraint?: boolean | null,
+ *   data_logged?: boolean | null
  * }} TaskMatchShape
  */
 
@@ -59,6 +73,146 @@ const CANONICAL_INPUT_TYPES = new Set([
 
 /** Canonical task types (must match capability `supports_task_types` literals). */
 const CANONICAL_TASK_TYPES = new Set(['rule-based', 'judgment', 'edge-case', 'admin', 'reporting'])
+
+/** Input types overlapping with generic "mixed" BPO workloads. */
+const MIXED_BRIDGE_INPUT_TYPES = ['unstructured_text', 'structured', 'mixed', 'unstructured_image', 'unstructured_voice']
+
+/** @type {Record<MatchQuality, number>} */
+const MATCH_QUALITY_RANK = {
+  exact: 0,
+  partial: 1,
+  speculative: 2,
+}
+
+/**
+ * Copy task row and infer missing classifier fields from task_name (never throws).
+ *
+ * @param {TaskMatchShape | null | undefined} task
+ * @returns {Record<string, unknown>}
+ */
+export function inferMissingFields(task) {
+  if (!task || typeof task !== 'object') return {}
+  try {
+    /** @type {Record<string, unknown>} */
+    const inferred = { ...task }
+    const name = typeof task.task_name === 'string' ? task.task_name.toLowerCase() : ''
+
+    if (!inferred.input_data_type && inferred.input_data_type !== '') {
+      if (
+        name.includes('voice') ||
+        name.includes('call') ||
+        name.includes('phone')
+      ) {
+        inferred.input_data_type = 'unstructured_voice'
+      } else if (
+        name.includes('image') ||
+        name.includes('photo') ||
+        name.includes('visual')
+      ) {
+        inferred.input_data_type = 'unstructured_image'
+      } else if (name.includes('video')) {
+        inferred.input_data_type = 'unstructured_video'
+      } else if (
+        name.includes('report') ||
+        name.includes('compile') ||
+        name.includes('dashboard') ||
+        name.includes('data')
+      ) {
+        inferred.input_data_type = 'structured'
+      } else if (name.includes('coach') || name.includes('calibrat')) {
+        inferred.input_data_type = 'unstructured_text'
+      } else {
+        inferred.input_data_type = 'mixed'
+      }
+      inferred._input_data_type_inferred = true
+    }
+
+    if (!inferred.task_type && inferred.task_type !== '') {
+      if (
+        name.includes('compile') ||
+        name.includes('report') ||
+        name.includes('dashboard') ||
+        name.includes('summary')
+      ) {
+        inferred.task_type = 'reporting'
+      } else if (
+        name.includes('coach') ||
+        name.includes('audit') ||
+        name.includes('investigate') ||
+        name.includes('judge') ||
+        name.includes('assess') ||
+        name.includes('evaluate')
+      ) {
+        inferred.task_type = 'judgment'
+      } else if (
+        name.includes('escalate') ||
+        name.includes('exception') ||
+        name.includes('severe') ||
+        name.includes('precedent')
+      ) {
+        inferred.task_type = 'edge-case'
+      } else if (
+        name.includes('schedule') ||
+        name.includes('approve') ||
+        name.includes('admin')
+      ) {
+        inferred.task_type = 'admin'
+      } else {
+        inferred.task_type = 'rule-based'
+      }
+      inferred._task_type_inferred = true
+    }
+
+    if (!inferred.consequence_of_error && inferred.consequence_of_error !== '') {
+      if (task.regulatory_constraint === true) {
+        inferred.consequence_of_error = 'critical'
+      } else if (
+        name.includes('csam') ||
+        name.includes('terror') ||
+        name.includes('fraud') ||
+        name.includes('compliance') ||
+        name.includes('kyc') ||
+        name.includes('aml')
+      ) {
+        inferred.consequence_of_error = 'critical'
+      } else if (
+        name.includes('precedent') ||
+        name.includes('policy') ||
+        name.includes('escalat') ||
+        name.includes('severe')
+      ) {
+        inferred.consequence_of_error = 'high'
+      } else if (
+        name.includes('spam') ||
+        name.includes('bot') ||
+        name.includes('routine') ||
+        name.includes('basic')
+      ) {
+        inferred.consequence_of_error = 'low'
+      } else {
+        inferred.consequence_of_error = 'medium'
+      }
+      inferred._consequence_inferred = true
+    }
+
+    if (inferred.data_logged === null || inferred.data_logged === undefined) {
+      if (
+        name.includes('coach') ||
+        name.includes('calibrat') ||
+        name.includes('investigat')
+      ) {
+        inferred.data_logged = false
+      } else {
+        inferred.data_logged = true
+      }
+      inferred._data_logged_inferred = true
+    }
+
+    return inferred
+  } catch {
+    return { ...(task && typeof task === 'object' ? task : {}) }
+  }
+}
 
 /**
  * Normalizes free-form / DB task fields to library enums (case, spaces, common aliases).
@@ -123,15 +277,10 @@ function normalizeConsequenceLevel(value) {
 }
 
 /**
- * Returns true when the task's consequence is at or above the capability's minimum threshold
- * (`min_consequence_supported`): the stakes are high enough that this automation is appropriate.
+ * Returns true when the task consequence is handled by capability min gate.
  *
- * Equivalently for `consequenceLevels = ['low','medium','high','critical']`:
- * `consequenceOK = consequenceLevels.indexOf(task.consequence_of_error)
- *   >= consequenceLevels.indexOf(cap.min_consequence_supported)`
- *
- * @param {ConsequenceLevel} capabilityLevel `min_consequence_supported` from a capability.
- * @param {ConsequenceLevel} taskLevel `consequence_of_error` from a task.
+ * @param {ConsequenceLevel} capabilityLevel min_consequence_supported
+ * @param {ConsequenceLevel} taskLevel
  * @returns {boolean}
  */
 export function consequenceLevelGreaterOrEqual(capabilityLevel, taskLevel) {
@@ -139,6 +288,53 @@ export function consequenceLevelGreaterOrEqual(capabilityLevel, taskLevel) {
   const task = CONSEQUENCE_ORDER[taskLevel]
   if (typeof cap !== 'number' || typeof task !== 'number') return false
   return task >= cap
+}
+
+/**
+ * For critical-impact tasks: only capabilities whose min threshold is high or critical.
+ *
+ * @param {ConsequenceLevel} capMin
+ * @returns {boolean}
+ */
+function criticalTaskCapabilityAllowed(capMin) {
+  return capMin === 'high' || capMin === 'critical'
+}
+
+/**
+ * @param {Capability} cap
+ * @param {string | null} inputNorm
+ * @returns {{ exact: boolean, partial: boolean }}
+ */
+function inputMatchFlags(cap, inputNorm) {
+  if (!inputNorm) return { exact: false, partial: false }
+  if (cap.supports_input_types.includes(inputNorm)) return { exact: true, partial: false }
+  if (inputNorm === 'mixed') {
+    const hasBridge = cap.supports_input_types.some((t) => MIXED_BRIDGE_INPUT_TYPES.includes(t))
+    return { exact: cap.supports_input_types.includes('mixed'), partial: !!hasBridge }
+  }
+  if (cap.supports_input_types.includes('mixed')) return { exact: false, partial: true }
+  return { exact: false, partial: false }
+}
+
+/**
+ * @param {Capability} cap
+ * @param {string | null} taskNorm
+ * @returns {{ exact: boolean, partial: boolean }}
+ */
+function taskMatchFlags(cap, taskNorm) {
+  if (!taskNorm) return { exact: false, partial: false }
+  if (cap.supports_task_types.includes(taskNorm)) return { exact: true, partial: false }
+  /** Cross-family partials common in moderation / ops queues */
+  const pairs = [
+    ['rule-based', 'judgment'],
+    ['judgment', 'rule-based'],
+    ['admin', 'reporting'],
+    ['reporting', 'admin'],
+  ]
+  const partialOk = pairs.some(
+    ([a, b]) => taskNorm === a && cap.supports_task_types.includes(b),
+  )
+  return { exact: false, partial: partialOk }
 }
 
 /**
@@ -332,7 +528,6 @@ export const CAPABILITY_LIBRARY = Object.freeze([
     name: 'Content moderation classifier',
     description:
       'Pre-screens user-generated text and images for policy breaches before human review.',
-    // Text/image/mixed UGC; low-consequence tasks excluded via min_consequence_supported (e.g. coaching).
     supports_input_types: ['unstructured_text', 'unstructured_image', 'mixed'],
     supports_task_types: ['rule-based', 'judgment'],
     typical_accuracy: 0.89,
@@ -385,30 +580,190 @@ export const CAPABILITY_LIBRARY = Object.freeze([
 ])
 
 /**
- * Returns capabilities that match a task by input type, task type, and consequence ceiling,
- * sorted by `typical_accuracy` descending, at most five entries.
+ * Graded capability matches for imperfect intake data — includes exact, partial, and speculative tiers.
+ * Regulatory-locked tasks return an empty list (caller should force human-only).
  *
- * @param {TaskMatchShape} task
- * @returns {Capability[]}
+ * @param {TaskMatchShape} task Raw task shape (possibly null classifier fields).
+ * @returns {CapabilityMatch[]}
  */
 export function matchCapabilities(task) {
-  const inputNorm = normalizeInputDataType(task.input_data_type)
-  const taskNorm = normalizeTaskType(task.task_type)
-  const consNorm = normalizeConsequenceLevel(task.consequence_of_error)
+  const enrichedTask = inferMissingFields(
+    /** @type {TaskMatchShape} */ (task && typeof task === 'object' ? task : {}),
+  )
+  /** @typedef {Record<string, unknown>} ET */
+  const et = /** @type {ET} */ (enrichedTask)
 
-  /** @type {Capability[]} */
-  const matches = []
-  for (const cap of CAPABILITY_LIBRARY) {
-    const input_match = inputNorm != null && cap.supports_input_types.includes(inputNorm)
-    const task_match = taskNorm != null && cap.supports_task_types.includes(taskNorm)
-    const consequence_ok =
-      consNorm != null &&
-      consequenceLevelGreaterOrEqual(cap.min_consequence_supported, consNorm)
-    const overall_match = input_match && task_match && consequence_ok
-
-    if (overall_match) matches.push(cap)
+  if (et.regulatory_constraint === true) {
+    return []
   }
 
-  matches.sort((a, b) => b.typical_accuracy - a.typical_accuracy)
-  return matches.slice(0, 5)
+  const inputNorm = normalizeInputDataType(
+    typeof et.input_data_type === 'string' ? et.input_data_type : null,
+  )
+  const taskNorm = normalizeTaskType(typeof et.task_type === 'string' ? et.task_type : null)
+  const consNorm = normalizeConsequenceLevel(
+    typeof et.consequence_of_error === 'string' ? et.consequence_of_error : null,
+  )
+  /** @type {ConsequenceLevel} */
+  const consLevel = consNorm ?? 'medium'
+  const stakesLowMed = consLevel === 'low' || consLevel === 'medium'
+
+  /** @type {CapabilityMatch[]} */
+  const tieredMatches = []
+
+  for (const cap of CAPABILITY_LIBRARY) {
+    if (!consequenceLevelGreaterOrEqual(cap.min_consequence_supported, consLevel)) {
+      continue
+    }
+    if (consLevel === 'critical' && !criticalTaskCapabilityAllowed(cap.min_consequence_supported)) {
+      continue
+    }
+
+    const inF = inputMatchFlags(cap, inputNorm)
+    const taF = taskMatchFlags(cap, taskNorm)
+
+    const inputExact = inF.exact
+    const taskExact = taF.exact
+
+    const matureOk = cap.maturity === 'mature' || cap.maturity === 'mainstream'
+
+    /** @type {MatchQuality | null} */
+    let quality = null
+    /** @type {string[]} */
+    const reasons = []
+
+    const exactTriple = inputExact && taskExact
+    if (exactTriple) {
+      quality = 'exact'
+      reasons.push(
+        'Input type, task type, and consequence severity are all within this capability envelope.',
+      )
+    } else {
+      /** Relaxed on exactly one of input vs task; consequence gate already enforced above. */
+      const partialBridged =
+        (inputExact && taF.partial) || (inF.partial && taskExact)
+
+      if (partialBridged) {
+        quality = 'partial'
+        if (inF.partial) {
+          reasons.push(
+            'Input channel matched via relaxed overlap (e.g. mixed workload vs text-heavy capability).',
+          )
+        }
+        if (taF.partial) {
+          reasons.push('Task modality matched via adjacent ops pattern.')
+        }
+        if (inputExact && !taskExact && taF.partial) {
+          reasons.push('Task type bridges to adjacent supported roles.')
+        }
+        if (!inputExact && inF.partial && taskExact) {
+          reasons.push('Input bridges while task type is an exact fit.')
+        }
+      } else {
+        /** One structural axis exact, no partial bridge on the other — mature + low/medium only. */
+        const structExactCount = Number(inputExact) + Number(taskExact)
+        const speculativeEligible =
+          stakesLowMed &&
+          matureOk &&
+          structExactCount === 1 &&
+          !inF.partial &&
+          !taF.partial
+
+        if (speculativeEligible) {
+          quality = 'speculative'
+          reasons.push(
+            'Only one classifier dimension lines up exactly; mature or mainstream tooling — exploratory fit.',
+          )
+        }
+      }
+    }
+
+    if (quality) {
+      tieredMatches.push({
+        capability: cap,
+        match_quality: /** @type {MatchQuality} */ (quality),
+        match_reasons: [...reasons],
+      })
+    }
+  }
+
+  /** Keep best match_quality per capability id */
+  tieredMatches.sort((a, b) => MATCH_QUALITY_RANK[a.match_quality] - MATCH_QUALITY_RANK[b.match_quality])
+
+  /** @type {Map<string, CapabilityMatch>} */
+  const byId = new Map()
+  for (const m of tieredMatches) {
+    const prev = byId.get(m.capability.id)
+    if (
+      !prev ||
+      MATCH_QUALITY_RANK[m.match_quality] < MATCH_QUALITY_RANK[prev.match_quality] ||
+      (m.match_quality === prev.match_quality &&
+        m.capability.typical_accuracy > prev.capability.typical_accuracy)
+    ) {
+      byId.set(m.capability.id, m)
+    }
+  }
+
+  /** @type {CapabilityMatch[]} */
+  let ranked = [...byId.values()]
+
+  ranked.sort((a, b) => {
+    const d = MATCH_QUALITY_RANK[a.match_quality] - MATCH_QUALITY_RANK[b.match_quality]
+    if (d !== 0) return d
+    return b.capability.typical_accuracy - a.capability.typical_accuracy
+  })
+
+  /** Ensure at least one candidate when not regulatory-locked and not critical-with-no-high-min */
+  const criticalNeedsHighMin = consLevel === 'critical'
+  const hasAnyCoverage = ranked.length > 0
+
+  if (!hasAnyCoverage && et.regulatory_constraint !== true) {
+    if (criticalNeedsHighMin) {
+      const pool = CAPABILITY_LIBRARY.filter(
+        (c) =>
+          consequenceLevelGreaterOrEqual(c.min_consequence_supported, consLevel) &&
+          criticalTaskCapabilityAllowed(c.min_consequence_supported),
+      )
+      pool.sort((a, b) => b.typical_accuracy - a.typical_accuracy)
+      const cap = pool[0]
+      if (cap) {
+        ranked = [
+          {
+            capability: cap,
+            match_quality: 'partial',
+            match_reasons: [
+              'Critical severity: library narrowed to capabilities whose minimum supported consequence is high or critical.',
+            ],
+          },
+        ]
+      }
+    } else {
+      const pool = [...CAPABILITY_LIBRARY].filter((c) =>
+        consequenceLevelGreaterOrEqual(c.min_consequence_supported, consLevel),
+      )
+      pool.sort((a, b) => {
+        const ma = Number(criticalTaskCapabilityAllowed(a.min_consequence_supported))
+        const mb = Number(criticalTaskCapabilityAllowed(b.min_consequence_supported))
+        if (ma !== mb) return mb - ma
+        return b.typical_accuracy - a.typical_accuracy
+      })
+      const picks = []
+      const maturePreferred = pool.filter((c) => c.maturity === 'mature' || c.maturity === 'mainstream')
+      const source =
+        stakesLowMed && maturePreferred.length > 0 ? maturePreferred : pool
+      for (const cap of source) {
+        if (picks.length >= 3) break
+        picks.push({
+          capability: cap,
+          match_quality: 'speculative',
+          match_reasons: [
+            'Fallback: retain mature library options so the model can reason from task text, not an empty list.',
+          ],
+        })
+      }
+      ranked = picks
+    }
+  }
+
+  return ranked.slice(0, 5)
 }

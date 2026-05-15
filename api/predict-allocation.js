@@ -7,6 +7,65 @@ import { calibrateConfidence } from '../src/lib/confidenceCalibration.js'
 
 const MODEL_ID = 'gemini-2.5-flash'
 const FEATURE = 'f2_allocation'
+const QUALITY_ALERT_FEATURE = 'f2_allocation_quality_alert'
+
+/**
+ * Smoke alarm: if >90% of non-regulatory tasks on an engagement are human-only once all tasks have allocations,
+ * log a diagnostic row (non-blocking).
+ *
+ * @param {import('@supabase/supabase-js').SupabaseClient} supabase
+ * @param {string} engagementId
+ */
+async function maybeLogF2AllocationQualityAlert(supabase, engagementId) {
+  try {
+    const { data: tasks, error } = await supabase
+      .from('tasks')
+      .select('ai_allocation, regulatory_constraint')
+      .eq('engagement_id', engagementId)
+
+    if (error || !Array.isArray(tasks) || tasks.length === 0) return
+
+    const allHaveAllocation = tasks.every(
+      (t) =>
+        t.ai_allocation != null && String(String(t.ai_allocation)).trim().length > 0,
+    )
+    if (!allHaveAllocation) return
+
+    const eligible = tasks.filter((t) => t.regulatory_constraint !== true)
+    if (eligible.length === 0) return
+
+    const humanOnlyCount = eligible.filter(
+      (t) => String(t.ai_allocation ?? '').trim().toLowerCase() === 'human-only',
+    ).length
+
+    const ratio = humanOnlyCount / eligible.length
+    if (ratio <= 0.9) return
+
+    const msg = [
+      `Anomaly detected: ${humanOnlyCount} of ${eligible.length} tasks recommended as `,
+      `human-only. This may indicate data quality issues in task fields `,
+      `(null input_data_type, task_type, or consequence_of_error).`,
+    ].join('')
+
+    const row = {
+      engagement_id: engagementId,
+      feature: QUALITY_ALERT_FEATURE,
+      model: 'system',
+      prompt_text: null,
+      response_text: null,
+      status: 'warning',
+      error_message: msg,
+      prompt_tokens: null,
+      completion_tokens: null,
+      total_tokens: null,
+      duration_ms: null,
+    }
+    const { error: insertErr } = await insertLlmCallLog(supabase, row)
+    if (insertErr) console.error('[predict-allocation] allocation quality alert log failed:', insertErr)
+  } catch (e) {
+    console.error('[predict-allocation] maybeLogF2AllocationQualityAlert:', e)
+  }
+}
 
 /**
  * @param {unknown} value
@@ -235,6 +294,8 @@ export default async function handler(req, res) {
       input_data_type: taskRow.input_data_type,
       task_type: taskRow.task_type,
       consequence_of_error: taskRow.consequence_of_error,
+      regulatory_constraint: taskRow.regulatory_constraint,
+      data_logged: taskRow.data_logged,
     })
 
     const engagementContext = engagementRowToContext(
@@ -382,6 +443,8 @@ export default async function handler(req, res) {
       res.status(500).json({ error: 'Failed to save prediction to task', details: updateErr.message })
       return
     }
+
+    await maybeLogF2AllocationQualityAlert(supabase, engagementId)
 
     res.status(200).json({
       taskId,
