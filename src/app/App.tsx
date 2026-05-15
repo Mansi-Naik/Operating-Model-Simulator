@@ -16,6 +16,7 @@ import { Summary } from './components/screens/Summary';
 
 type Screen = 'mode-selector' | 'guided-form' | 'upload' | 'reconciliation' | 'readiness-review' | 'allocation-matrix' | 'future-roles' | 'pod-structure' | 'economics' | 'timeline' | 'summary' | 'locked';
 type PodStartScreen = 'pre-run' | 'variant-selector' | 'org-rollup';
+type TimelineStartScreen = 'pre-run' | 'loading' | 'implementation' | 'gantt' | 'dependencies' | 'scenarios';
 
 function engagementIdFromUrl(): string | null {
   if (typeof window === 'undefined') return null;
@@ -27,6 +28,7 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('mode-selector');
   const [podStartScreen, setPodStartScreen] = useState<PodStartScreen>('pre-run');
   const [podMessage, setPodMessage] = useState<string | null>(null);
+  const [timelineStartScreen, setTimelineStartScreen] = useState<TimelineStartScreen | undefined>(undefined);
   const [activeEngagementId, setActiveEngagementId] = useState<string | null>(() => engagementIdFromUrl());
 
   useEffect(() => {
@@ -236,14 +238,38 @@ export default function App() {
       case 'timeline':
         return (
           <Timeline
-            onBack={() => setCurrentScreen('economics')}
-            onGoToF3={() => setCurrentScreen('future-roles')}
-            onGoToF5={() => setCurrentScreen('economics')}
-            onProceedToF7={handleProceedToF7}
+            key={timelineStartScreen ?? 'timeline-default'}
+            initialScreen={timelineStartScreen}
+            onBack={() => {
+              setTimelineStartScreen(undefined);
+              setCurrentScreen('economics');
+            }}
+            onGoToF3={() => {
+              setTimelineStartScreen(undefined);
+              setCurrentFeature('f3');
+              setCurrentScreen('future-roles');
+            }}
+            onGoToF5={() => {
+              setTimelineStartScreen(undefined);
+              setCurrentScreen('economics');
+            }}
+            onProceedToF7={() => {
+              setTimelineStartScreen(undefined);
+              handleProceedToF7();
+            }}
           />
         );
       case 'summary':
-        return <Summary onBack={() => setCurrentScreen('timeline')} />;
+        return (
+          <Summary
+            onBack={() => {
+              setTimelineStartScreen('scenarios');
+              setCurrentFeature('f6');
+              setCurrentScreen('timeline');
+            }}
+            onNavigateToFeature={handleFeatureClick}
+          />
+        );
       default:
         return (
           <div className="p-10">

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { F6_0_PreRun } from './timeline/F6_0_PreRun';
 import { F6_1_ImplementationTimeline } from './timeline/F6_1_ImplementationTimeline';
 import { F6_1_B_DependenciesView } from './timeline/F6_1_B_DependenciesView';
@@ -13,10 +13,16 @@ interface TimelineProps {
   onProceedToF7?: () => void;
   onGoToF5?: () => void;
   onGoToF3?: () => void;
+  /** When set (e.g. returning from F7), opens this sub-screen once. */
+  initialScreen?: TimelineScreen;
 }
 
-export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3 }: TimelineProps) {
-  const [currentScreen, setCurrentScreen] = useState<TimelineScreen>('pre-run');
+export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3, initialScreen }: TimelineProps) {
+  const [currentScreen, setCurrentScreen] = useState<TimelineScreen>(initialScreen ?? 'pre-run');
+
+  useEffect(() => {
+    if (initialScreen) setCurrentScreen(initialScreen);
+  }, [initialScreen]);
 
   const renderScreen = () => {
     switch (currentScreen) {

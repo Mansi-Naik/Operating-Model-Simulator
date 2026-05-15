@@ -1,417 +1,713 @@
 import {
-  Download,
-  Star,
-  Shield,
+  ArrowLeft,
+  ArrowRight,
+  Check,
   ChevronDown,
   ChevronUp,
-  AlertTriangle,
-  Info,
-  Check,
-  ArrowRight,
-  Plus,
-  Sparkles,
+  Circle,
+  ArrowDown,
+  ArrowUp,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEngagement } from '../../../hooks/useEngagement';
+import { aggregateSummary } from '../../../lib/summaryAggregator';
+import { getFinalAllocation } from '../../../lib/roleAggregation';
+import { supabase } from '../../../supabaseClient';
+
+type Recommendation = 'PROCEED' | 'MARGINAL' | 'DO_NOT_PROCEED' | 'NEEDS_REVIEW';
+type Direction = 'positive' | 'negative' | 'neutral';
 
 interface SummaryProps {
   onBack?: () => void;
+  onNavigateToFeature?: (featureId: string) => void;
 }
 
-export function Summary({ onBack }: SummaryProps) {
-  const [showRiskDetails, setShowRiskDetails] = useState(false);
+interface JourneyNode {
+  feature: string;
+  label: string;
+  status: string;
+  summary: string;
+}
+
+interface StatTile {
+  label: string;
+  current: string | number | null;
+  future: string | number | null;
+  delta_pct: number | null;
+  direction: Direction;
+}
+
+interface RiskCategoryRow {
+  name: string;
+  severity: string;
+  kept_human: boolean;
+}
+
+function asObj(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function parseJsonObject(raw: unknown): Record<string, unknown> {
+  if (raw == null) return {};
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+}
+
+function recommendationChipClass(rec: Recommendation): string {
+  switch (rec) {
+    case 'PROCEED':
+      return 'bg-[#E2EFDA] text-[#548235]';
+    case 'MARGINAL':
+      return 'bg-[#FFF0DC] text-[#FFAB28]';
+    case 'DO_NOT_PROCEED':
+      return 'bg-[#FCE4D6] text-[#FD4E59]';
+    default:
+      return 'bg-[#E8E8E8] text-[#6D7069]';
+  }
+}
+
+function directionColor(direction: Direction): string {
+  if (direction === 'positive') return 'text-[#548235]';
+  if (direction === 'negative') return 'text-[#FD4E59]';
+  return 'text-[#6D7069]';
+}
+
+function severityChipClass(severity: string): string {
+  const s = severity.toLowerCase();
+  if (s === 'critical') return 'bg-[#FCE4D6] text-[#FD4E59]';
+  if (s === 'high') return 'bg-[#FFF0DC] text-[#FFAB28]';
+  if (s === 'medium') return 'bg-[#FFF0DC] text-[#6D7069]';
+  return 'bg-[#E2EFDA] text-[#548235]';
+}
+
+function formatTileValue(value: string | number | null): string {
+  if (value == null) return '—';
+  if (typeof value === 'number') return `${value}%`;
+  return value;
+}
+
+function formatDelta(delta: number | null): string {
+  if (delta == null || !Number.isFinite(delta)) return '';
+  const sign = delta > 0 ? '+' : '';
+  return `${sign}${delta}%`;
+}
+
+async function persistF7Summary(
+  engagementId: string,
+  pipelineId: string | null,
+  headline: { recommendation: string; scenario_name: string },
+): Promise<void> {
+  const payload = {
+    generated_at: new Date().toISOString(),
+    recommendation: headline.recommendation,
+    scenario_name: headline.scenario_name,
+  };
+
+  if (pipelineId) {
+    await supabase.from('pipeline_runs').update({ f7_summary: payload }).eq('id', pipelineId);
+    return;
+  }
+
+  await supabase.from('pipeline_runs').insert({
+    engagement_id: engagementId,
+    f7_summary: payload,
+  });
+}
+
+function StackedAllocationBar({
+  label,
+  automated,
+  assisted,
+  human,
+  automatedPct,
+  assistedPct,
+  humanPct,
+}: {
+  label: string;
+  automated: number;
+  assisted: number;
+  human: number;
+  automatedPct: number;
+  assistedPct: number;
+  humanPct: number;
+}) {
+  const total = automated + assisted + human;
+  const aPct = total > 0 ? (automated / total) * 100 : automatedPct;
+  const sPct = total > 0 ? (assisted / total) * 100 : assistedPct;
+  const hPct = total > 0 ? (human / total) * 100 : humanPct;
 
   return (
-    <div className="p-10 max-w-[1204px] mx-auto">
-      {/* Top Header Row */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="text-[13px] text-[#161916] uppercase tracking-wide">Summary</div>
-        <button className="h-11 px-6 bg-[#FD4E59] text-white text-[13px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2">
-          <Download className="w-4 h-4" />
-          Export final deck
+    <div className="mb-5">
+      <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">{label}</div>
+      <div className="flex-1 h-7 rounded-full overflow-hidden flex border border-[#494949]/12">
+        {aPct > 0 ? (
+          <div
+            className="bg-[#548235] flex items-center justify-center min-w-[48px]"
+            style={{ width: `${Math.max(aPct, 8)}%` }}
+          >
+            <span className="text-[10px] font-medium text-white px-1">
+              {label.includes('count') ? `${automated} auto` : `${Math.round(automatedPct)}% auto`}
+            </span>
+          </div>
+        ) : null}
+        {sPct > 0 ? (
+          <div
+            className="bg-[#FFAB28] flex items-center justify-center min-w-[48px]"
+            style={{ width: `${Math.max(sPct, 8)}%` }}
+          >
+            <span className="text-[10px] font-medium text-white px-1">
+              {label.includes('count') ? `${assisted} assist` : `${Math.round(assistedPct)}% assist`}
+            </span>
+          </div>
+        ) : null}
+        {hPct > 0 ? (
+          <div
+            className="bg-[#6D7069] flex items-center justify-center min-w-[48px]"
+            style={{ width: `${Math.max(hPct, 8)}%` }}
+          >
+            <span className="text-[10px] font-medium text-white px-1">
+              {label.includes('count') ? `${human} human` : `${Math.round(humanPct)}% human`}
+            </span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+
+export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
+  const engagementIdFromUrl =
+    typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
+
+  const { engagement, tasks, loading: engagementLoading, error: engagementError, loadEngagement } =
+    useEngagement(engagementIdFromUrl);
+
+  const [pipelineRuns, setPipelineRuns] = useState<Record<string, unknown>>({});
+  const [pipelineId, setPipelineId] = useState<string | null>(null);
+  const [pipelineLoading, setPipelineLoading] = useState(true);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
+  const [showRiskDetails, setShowRiskDetails] = useState(true);
+  const [showCaveats, setShowCaveats] = useState(false);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const savedF7Ref = useRef<string | null>(null);
+
+  const loadPipeline = useCallback(async () => {
+    if (!engagementIdFromUrl) {
+      setPipelineError('Missing engagement');
+      setPipelineLoading(false);
+      return;
+    }
+
+    setPipelineLoading(true);
+    setPipelineError(null);
+
+    const { data, error } = await supabase
+      .from('pipeline_runs')
+      .select('id, f2_matrix, f3_roles, f4_pods, f5_economics, f6_timeline')
+      .eq('engagement_id', engagementIdFromUrl)
+      .maybeSingle();
+
+    if (error) {
+      setPipelineError(error.message);
+      setPipelineRuns({});
+      setPipelineId(null);
+      setPipelineLoading(false);
+      return;
+    }
+
+    setPipelineId(typeof data?.id === 'string' ? data.id : null);
+    setPipelineRuns({
+      f2_matrix: data?.f2_matrix,
+      f3_roles: parseJsonObject(data?.f3_roles),
+      f4_pods: parseJsonObject(data?.f4_pods),
+      f5_economics: parseJsonObject(data?.f5_economics),
+      f6_timeline: parseJsonObject(data?.f6_timeline),
+    });
+    setPipelineLoading(false);
+  }, [engagementIdFromUrl]);
+
+  useEffect(() => {
+    void loadPipeline();
+  }, [loadPipeline]);
+
+  const taskRows = useMemo(
+    () => (Array.isArray(tasks) ? (tasks as Record<string, unknown>[]) : []),
+    [tasks],
+  );
+
+  const summary = useMemo(() => {
+    if (!engagement) return null;
+    return aggregateSummary(engagement as Record<string, unknown>, taskRows, pipelineRuns);
+  }, [engagement, taskRows, pipelineRuns]);
+
+  const headline = asObj(summary?.headline);
+  const recommendation = String(headline.recommendation ?? 'NEEDS_REVIEW') as Recommendation;
+  const statTiles = (Array.isArray(summary?.stat_tiles) ? summary.stat_tiles : []) as StatTile[];
+  const journey = (Array.isArray(summary?.journey) ? summary.journey : []) as JourneyNode[];
+  const allocationSummary = asObj(summary?.allocation_summary);
+  const coverageByVolume = asObj(allocationSummary.coverage_by_volume);
+  const riskEvidence = asObj(summary?.risk_evidence);
+  const coverageCheck = asObj(riskEvidence.coverage_check);
+  const caveats = asObj(summary?.caveats);
+  const limitations = Array.isArray(summary?.limitations) ? (summary.limitations as string[]) : [];
+
+  const allocationCounts = useMemo(() => {
+    let automated = 0;
+    let assisted = 0;
+    let human = 0;
+    for (const task of taskRows) {
+      const alloc = getFinalAllocation(task) || 'human-only';
+      if (alloc === 'tech-automated') automated += 1;
+      else if (alloc === 'tech-assisted') assisted += 1;
+      else human += 1;
+    }
+    return { automated, assisted, human };
+  }, [taskRows]);
+
+  const missingFeatures = useMemo(() => {
+    const f5 = asObj(pipelineRuns.f5_economics);
+    const f3 = asObj(pipelineRuns.f3_roles);
+    const f4 = asObj(pipelineRuns.f4_pods);
+    const f6 = asObj(pipelineRuns.f6_timeline);
+    const hasF2 = journey.find((j) => j.feature === 'F2')?.status === 'complete';
+    const hasF3 = Array.isArray(f3.redesigns) && f3.redesigns.length > 0;
+    const hasF4 = Boolean(f4.selected_variant_name);
+    const hasF5 = Boolean(f5.economics_result);
+    const hasF6 = Boolean(f6.summary);
+
+    const items: { id: string; label: string }[] = [];
+    if (!hasF2) items.push({ id: 'f2', label: 'F2 Allocation' });
+    if (!hasF3) items.push({ id: 'f3', label: 'F3 Roles' });
+    if (!hasF4) items.push({ id: 'f4', label: 'F4 Pods' });
+    if (!hasF5) items.push({ id: 'f5', label: 'F5 Economics' });
+    if (!hasF6) items.push({ id: 'f6', label: 'F6 Timeline' });
+    return items;
+  }, [journey, pipelineRuns]);
+
+  useEffect(() => {
+    if (!summary || !engagementIdFromUrl) return;
+    const sig = JSON.stringify({
+      rec: headline.recommendation,
+      scenario: headline.scenario_name,
+      tasks: taskRows.length,
+      pipeline: pipelineId,
+    });
+    if (savedF7Ref.current === sig) return;
+    savedF7Ref.current = sig;
+
+    void persistF7Summary(engagementIdFromUrl, pipelineId, {
+      recommendation: String(headline.recommendation ?? 'NEEDS_REVIEW'),
+      scenario_name: String(headline.scenario_name ?? ''),
+    });
+  }, [summary, engagementIdFromUrl, pipelineId, headline.recommendation, headline.scenario_name, taskRows.length]);
+
+  const loading = engagementLoading || pipelineLoading;
+  const error = engagementError ?? pipelineError;
+
+  const riskCategories = (
+    Array.isArray(riskEvidence.risk_categories) ? riskEvidence.risk_categories : []
+  ) as RiskCategoryRow[];
+  const lockedTasks = Array.isArray(riskEvidence.locked_tasks) ? (riskEvidence.locked_tasks as string[]) : [];
+  const extractionWarnings = Array.isArray(caveats.extraction_warnings)
+    ? (caveats.extraction_warnings as string[])
+    : [];
+  const dataGaps = Array.isArray(caveats.data_gaps) ? (caveats.data_gaps as string[]) : [];
+
+  const todayHumanVol = Number(coverageCheck.total_volume_handled_by_humans_today) || 0;
+  const futureHumanVol = Number(coverageCheck.total_volume_handled_by_humans_future) || 0;
+  const todayHumanPct = todayHumanVol > 0 ? 100 : 0;
+  const futureHumanPct =
+    todayHumanVol > 0 ? Math.round((futureHumanVol / todayHumanVol) * 100) : 0;
+
+  const handleExport = () => {
+    setExportNotice('Export coming soon — full report PDF is on the roadmap.');
+    window.setTimeout(() => setExportNotice(null), 4000);
+  };
+
+  const featureRoute = (feature: string) => {
+    const map: Record<string, string> = {
+      F1: 'f1',
+      F2: 'f2',
+      F3: 'f3',
+      F4: 'f4',
+      F5: 'f5',
+      F6: 'f6',
+    };
+    return map[feature] ?? 'f1';
+  };
+
+  if (loading) {
+    return (
+      <div className="p-10 max-w-[1204px] mx-auto">
+        <div className="text-[13px] text-[#161916] uppercase tracking-wide mb-4">Summary</div>
+        <p className="text-[14px] text-[#494949]">Loading summary…</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-10 max-w-[1204px] mx-auto">
+        <div className="text-[13px] text-[#161916] uppercase tracking-wide mb-4">Summary</div>
+        <div className="text-[14px] text-[#FD4E59] mb-4">{error}</div>
+        <button
+          type="button"
+          onClick={() => {
+            if (engagementIdFromUrl) void loadEngagement(engagementIdFromUrl);
+            void loadPipeline();
+          }}
+          className="h-9 px-4 border border-[#494949]/30 text-[#494949] text-[13px] rounded-md hover:bg-[#494949]/5"
+        >
+          Retry
         </button>
       </div>
+    );
+  }
 
-      {/* Section 1 - Recommendation Hero */}
-      <div className="bg-[#FDF8F4] border-l-[6px] border-[#FD4E59] rounded-2xl p-10 mb-6" style={{ minHeight: '200px' }}>
-        <div className="flex flex-col justify-center">
-          <div className="text-[11px] font-semibold text-[#FFAB28] uppercase tracking-widest mb-2">
-            Recommended Operating Model · ACME CORP
-          </div>
-          <div className="flex items-center gap-3 mb-2">
-            <h1 className="text-[48px] font-bold text-[#161916]">Balanced</h1>
-            <div className="w-7 h-7 bg-[#FD4E59] rounded-full flex items-center justify-center flex-shrink-0">
-              <Star className="w-4 h-4 text-white fill-white" />
-            </div>
-          </div>
-          <p className="text-[16px] italic text-[#494949] mb-4">
-            Industry-benchmark span, meaningful cost reduction, manageable transition risk.
+  return (
+    <div className="p-10 max-w-[1204px] mx-auto pb-16">
+      {exportNotice ? (
+        <div className="fixed bottom-6 right-6 z-50 bg-[#161916] text-white text-[13px] px-5 py-3 rounded-lg shadow-lg">
+          {exportNotice}
+        </div>
+      ) : null}
+
+      {onBack ? (
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex items-center gap-2 text-[#6D7069] hover:text-[#161916] mb-6 text-[14px]"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Timeline
+        </button>
+      ) : null}
+
+      {missingFeatures.length > 0 ? (
+        <div className="mb-6 bg-[#FFF0DC] border border-[#FFAB28]/30 rounded-xl p-5">
+          <p className="text-[14px] text-[#161916] mb-3">
+            Some features haven&apos;t been generated yet. Run F2–F6 to see the full picture.
           </p>
-          <div className="text-[12px] text-[#6D7069]">
-            Synthesized from 6 pipeline stages · Generated today · Acme Corp moderation engagement
+          <div className="flex flex-wrap gap-2">
+            {missingFeatures.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onNavigateToFeature?.(item.id)}
+                className="h-8 px-3 text-[12px] font-medium text-[#FD4E59] border border-[#FD4E59]/40 rounded-md hover:bg-[#FD4E59]/5"
+              >
+                Go to {item.label} →
+              </button>
+            ))}
           </div>
+        </div>
+      ) : null}
+
+      {/* Section 1 — Headline */}
+      <div className="relative bg-[#FDF8F4] border-l-4 border-[#FD4E59] rounded-2xl p-8 mb-6">
+        <div className="absolute top-6 right-6 flex flex-col items-end gap-2">
+          <span
+            className={`px-4 py-1.5 rounded-full text-[11px] font-semibold uppercase tracking-wider ${recommendationChipClass(recommendation)}`}
+          >
+            {recommendation.replace(/_/g, ' ')}
+          </span>
+          {caveats.illustrative_flag !== false ? (
+            <span className="h-7 px-3 border-[1.5px] border-dashed border-[#FFAB28] rounded-full flex items-center text-[10px] font-medium text-[#FFAB28] uppercase tracking-wider">
+              Illustrative
+            </span>
+          ) : null}
+        </div>
+
+        <div className="pr-40">
+          <h1 className="text-[36px] font-bold text-[#161916] mb-2 leading-tight">
+            {String(headline.scenario_name ?? 'Operating model summary')}
+          </h1>
+          <p className="text-[16px] text-[#494949] mb-4 max-w-[720px]">
+            {String(headline.one_line_summary ?? '')}
+          </p>
+          <span className="inline-block px-3 py-1 bg-white border border-[#494949]/15 rounded-full text-[12px] font-medium text-[#6D7069]">
+            {String(headline.pattern_label ?? '')}
+          </span>
         </div>
       </div>
 
-      {/* Section 2 - The Proof */}
+      {/* Section 2 — Stat tiles */}
+      {statTiles.length > 0 ? (
+        <div className="grid grid-cols-4 gap-4 mb-6">
+          {statTiles.map((tile) => (
+            <div
+              key={tile.label}
+              className="bg-white border border-[#494949]/12 rounded-xl p-5 shadow-sm"
+              style={{ minHeight: '140px' }}
+            >
+              <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">
+                {tile.label}
+              </div>
+              {tile.label === 'AI COVERAGE' ? (
+                <>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-[18px] font-medium text-[#6D7069]">{formatTileValue(tile.current)}</span>
+                    <span className="text-[14px] text-[#6D7069]">→</span>
+                    <span className="text-[28px] font-bold text-[#161916]">{formatTileValue(tile.future)}</span>
+                  </div>
+                  <div className={`text-[18px] font-bold flex items-center gap-1 ${directionColor(tile.direction)}`}>
+                    {tile.delta_pct != null && tile.delta_pct > 0 ? (
+                      <ArrowUp className="w-4 h-4" />
+                    ) : tile.delta_pct != null && tile.delta_pct < 0 ? (
+                      <ArrowDown className="w-4 h-4" />
+                    ) : null}
+                    {formatDelta(tile.delta_pct)}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className="text-[16px] font-medium text-[#6D7069]">{formatTileValue(tile.current)}</span>
+                    <span className="text-[14px] text-[#6D7069]">→</span>
+                    <span className="text-[22px] font-bold text-[#161916]">{formatTileValue(tile.future)}</span>
+                  </div>
+                  {tile.delta_pct != null ? (
+                    <div className={`text-[18px] font-bold flex items-center gap-1 ${directionColor(tile.direction)}`}>
+                      {tile.delta_pct < 0 ? <ArrowDown className="w-4 h-4" /> : <ArrowUp className="w-4 h-4" />}
+                      {formatDelta(tile.delta_pct)}
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Section 3 — Journey */}
       <div className="mb-6">
-        <h2 className="text-[14px] font-medium text-[#6D7069] uppercase tracking-widest mb-3">
-          The case for Balanced
-        </h2>
-        <div className="grid grid-cols-4 gap-4">
-          {/* Tile 1 - Cost Saving */}
-          <div className="bg-white border border-[#494949]/12 rounded-xl p-6" style={{ minHeight: '140px' }}>
-            <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
-              Cost Saving
-            </div>
-            <div className="text-[32px] font-bold text-[#548235] mb-1">−22.9%</div>
-            <div className="text-[12px] italic text-[#6D7069]">range 18–28%</div>
-          </div>
-
-          {/* Tile 2 - Payback */}
-          <div className="bg-white border border-[#494949]/12 rounded-xl p-6" style={{ minHeight: '140px' }}>
-            <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">Payback</div>
-            <div className="text-[32px] font-bold text-[#161916] mb-1">Month 6</div>
-            <div className="text-[12px] italic text-[#6D7069]">full ramp by M9</div>
-          </div>
-
-          {/* Tile 3 - Headcount */}
-          <div className="bg-white border border-[#494949]/12 rounded-xl p-6" style={{ minHeight: '140px' }}>
-            <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
-              Headcount Δ
-            </div>
-            <div className="text-[32px] font-bold text-[#6D7069] mb-1">+3 (+2.7%)</div>
-            <div className="text-[12px] italic text-[#6D7069]">116 vs 113 today</div>
-          </div>
-
-          {/* Tile 4 - Risk Profile */}
-          <div className="bg-white border border-[#494949]/12 rounded-xl p-6" style={{ minHeight: '140px' }}>
-            <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
-              Risk Profile
-            </div>
-            <div className="inline-block px-4 py-2 bg-[#FFF0DC] text-[#FFAB28] text-[13px] font-semibold uppercase tracking-wide rounded mb-1" style={{ height: '28px', lineHeight: '12px' }}>
-              MED
-            </div>
-            <div className="text-[12px] italic text-[#6D7069]">manageable, controls strong</div>
-          </div>
+        <h2 className="text-[14px] font-medium text-[#6D7069] uppercase tracking-widest mb-3">Pipeline journey</h2>
+        <div className="flex items-stretch gap-2 overflow-x-auto pb-2">
+          {journey.map((node, index) => {
+            const complete = node.status === 'complete';
+            return (
+              <div key={node.feature} className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => onNavigateToFeature?.(featureRoute(node.feature))}
+                  className={`w-[168px] text-left rounded-xl border p-4 transition-shadow hover:shadow-md cursor-pointer ${
+                    complete
+                      ? 'bg-[#FCE4D6]/40 border-[#FD4E59]/30'
+                      : 'bg-white border-[#494949]/12'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-semibold text-[#FD4E59] uppercase">{node.feature}</span>
+                    {complete ? (
+                      <Check className="w-4 h-4 text-[#548235]" strokeWidth={2.5} />
+                    ) : (
+                      <Circle className="w-4 h-4 text-[#6D7069]" strokeWidth={1.5} />
+                    )}
+                  </div>
+                  <div className="text-[13px] font-semibold text-[#161916] mb-1">{node.label}</div>
+                  <p className="text-[11px] text-[#6D7069] leading-snug">{node.summary}</p>
+                </button>
+                {index < journey.length - 1 ? <ArrowRight className="w-4 h-4 text-[#6D7069] flex-shrink-0" /> : null}
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Section 3 - How We Get There */}
+      {/* Section 4 — Allocation */}
+      <div className="bg-white border border-[#494949]/12 rounded-xl p-6 mb-6">
+        <h2 className="text-[14px] font-medium text-[#161916] mb-4">Allocation summary</h2>
+        <StackedAllocationBar
+          label="By task count"
+          automated={allocationCounts.automated}
+          assisted={allocationCounts.assisted}
+          human={allocationCounts.human}
+          automatedPct={Number(allocationSummary.automated_pct) || 0}
+          assistedPct={Number(allocationSummary.assisted_pct) || 0}
+          humanPct={Number(allocationSummary.human_only_pct) || 0}
+        />
+        <StackedAllocationBar
+          label="By volume × time"
+          automated={0}
+          assisted={0}
+          human={0}
+          automatedPct={Number(coverageByVolume.automated_pct) || 0}
+          assistedPct={Number(coverageByVolume.assisted_pct) || 0}
+          humanPct={Number(coverageByVolume.human_only_pct) || 0}
+        />
+        <p className="text-[12px] italic text-[#6D7069] mt-1">
+          Volume-weighted reflects business impact; task count reflects breadth of change.
+        </p>
+      </div>
+
+      {/* Section 5 — Risk */}
       <div className="mb-6">
-        <h2 className="text-[14px] font-medium text-[#6D7069] uppercase tracking-widest mb-3">
-          How we get there
-        </h2>
-        <div className="bg-white border border-[#494949]/12 rounded-xl p-7" style={{ minHeight: '280px' }}>
-          {/* Block A - Journey Strip */}
-          <div className="mb-3" style={{ minHeight: '80px' }}>
-            {/* Three milestones */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex-1 text-center">
-                <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-1">
-                  Today
+        <button
+          type="button"
+          onClick={() => setShowRiskDetails((v) => !v)}
+          className="w-full flex items-center justify-between bg-white border border-[#494949]/12 rounded-xl px-6 py-4 hover:bg-[#FDF8F4]/50"
+        >
+          <span className="text-[15px] font-semibold text-[#161916]">Risk &amp; Escalation Evidence</span>
+          {showRiskDetails ? <ChevronUp className="w-5 h-5 text-[#6D7069]" /> : <ChevronDown className="w-5 h-5 text-[#6D7069]" />}
+        </button>
+
+        {showRiskDetails ? (
+          <div className="mt-4 space-y-6">
+            <div>
+              <h3 className="text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">
+                Risk categories preserved
+              </h3>
+              {riskCategories.length === 0 ? (
+                <p className="text-[13px] text-[#6D7069]">No risk categories captured in intake.</p>
+              ) : (
+                <div className="border border-[#494949]/12 rounded-lg overflow-hidden">
+                  <table className="w-full text-[13px]">
+                    <thead>
+                      <tr className="bg-[#FDF8F4]">
+                        <th className="text-left p-3 font-semibold text-[#6D7069]">Risk</th>
+                        <th className="text-left p-3 font-semibold text-[#6D7069]">Severity</th>
+                        <th className="text-left p-3 font-semibold text-[#6D7069]">Kept human</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {riskCategories.map((row) => (
+                        <tr key={row.name} className="border-t border-[#494949]/12">
+                          <td className="p-3 text-[#161916]">{row.name}</td>
+                          <td className="p-3">
+                            <span
+                              className={`inline-block px-2 py-0.5 text-[10px] font-semibold uppercase rounded ${severityChipClass(row.severity)}`}
+                            >
+                              {row.severity}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            {row.kept_human ? (
+                              <span className="text-[#548235] font-medium">Yes</span>
+                            ) : (
+                              <span className="text-[#FD4E59] font-medium">No</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                <div className="text-[13px] text-[#161916]">113 FTE · 100% human</div>
-              </div>
-              <ArrowRight className="w-5 h-5 text-[#6D7069] mx-4" />
-              <div className="flex-1 text-center">
-                <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-1">
-                  9-Month Rollout
-                </div>
-              </div>
-              <ArrowRight className="w-5 h-5 text-[#6D7069] mx-4" />
-              <div className="flex-1 text-center">
-                <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-1">
-                  Future State
-                </div>
-                <div className="text-[13px] text-[#161916]">116 FTE · 62% AI-augmented</div>
-              </div>
+              )}
             </div>
 
-            {/* Phase markers */}
-            <div className="flex items-center justify-between">
-              <div className="flex-1 text-center">
-                <div className="flex items-center justify-center gap-2 mb-1">
-                  <div className="w-2 h-2 rounded-full bg-[#E2EFDA]" />
-                  <span className="text-[11px] font-medium text-[#548235] uppercase">P1 Foundation</span>
+            <div>
+              <h3 className="text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">Locked tasks</h3>
+              {lockedTasks.length === 0 ? (
+                <p className="text-[13px] text-[#6D7069]">No regulatory-locked tasks.</p>
+              ) : (
+                <div className="flex flex-wrap gap-3">
+                  {lockedTasks.map((name) => (
+                    <div
+                      key={name}
+                      className="bg-white border border-[#494949]/12 rounded-lg px-4 py-3 min-w-[200px]"
+                    >
+                      <div className="text-[13px] font-medium text-[#161916] mb-1">{name}</div>
+                      <span className="inline-block px-2 py-0.5 bg-[#FCE4D6] text-[#FD4E59] text-[10px] font-semibold uppercase rounded">
+                        Locked: regulatory
+                      </span>
+                    </div>
+                  ))}
                 </div>
-                <div className="text-[12px] font-medium text-[#6D7069]">3%</div>
-              </div>
-              <div className="flex-1 text-center">
-                <div className="flex items-center justify-center gap-2 mb-1">
-                  <div className="w-2 h-2 rounded-full bg-[#FFAB28]" />
-                  <span className="text-[11px] font-medium text-[#FFAB28] uppercase">P2 Pilot</span>
+              )}
+            </div>
+
+            <div className="bg-[#FDF8F4] border border-[#494949]/12 rounded-xl p-5">
+              <h3 className="text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">Coverage check</h3>
+              <p className="text-[14px] text-[#161916] mb-1">
+                Today: humans handle{' '}
+                <span className="font-semibold">{todayHumanPct}%</span> of volume → Future: humans handle{' '}
+                <span className="font-semibold">{futureHumanPct}%</span> of volume
+              </p>
+              <p className="text-[14px] text-[#494949] mb-3">
+                Reduction: <span className="font-semibold">{Number(coverageCheck.reduction_pct) || 0}%</span>
+              </p>
+              {coverageCheck.sufficient_safety_review === true ? (
+                <div className="flex items-center gap-2 text-[#548235] text-[13px] font-medium">
+                  <Check className="w-4 h-4" />
+                  Safety review coverage maintained
                 </div>
-                <div className="text-[12px] font-medium text-[#6D7069]">9%</div>
-              </div>
-              <div className="flex-1 text-center">
-                <div className="flex items-center justify-center gap-2 mb-1">
-                  <div className="w-2 h-2 rounded-full bg-[#FCE4D6]" />
-                  <span className="text-[11px] font-medium text-[#FD4E59] uppercase">P3 Scale</span>
-                </div>
-                <div className="text-[12px] font-medium text-[#6D7069]">18%</div>
-              </div>
-              <div className="flex-1 text-center">
-                <div className="flex items-center justify-center gap-2 mb-1">
-                  <div className="w-2 h-2 rounded-full bg-[#FD4E59]" />
-                  <span className="text-[11px] font-medium text-[#FD4E59] uppercase">P4 Optimize</span>
-                </div>
-                <div className="text-[12px] font-medium text-[#6D7069]">23%</div>
-              </div>
+              ) : (
+                <p className="text-[13px] text-[#FD4E59]">
+                  Review critical-consequence tasks — not all remain human-only.
+                </p>
+              )}
             </div>
           </div>
+        ) : null}
+      </div>
 
-          {/* Divider */}
-          <div className="border-t border-[#494949]/12 my-3" />
+      {/* Section 6 — Caveats */}
+      <div className="mb-6">
+        <button
+          type="button"
+          onClick={() => setShowCaveats((v) => !v)}
+          className="w-full flex items-center justify-between bg-white border border-[#494949]/12 rounded-xl px-6 py-4 hover:bg-[#FDF8F4]/50"
+        >
+          <span className="text-[15px] font-semibold text-[#161916]">Caveats &amp; Assumptions</span>
+          {showCaveats ? <ChevronUp className="w-5 h-5 text-[#6D7069]" /> : <ChevronDown className="w-5 h-5 text-[#6D7069]" />}
+        </button>
 
-          {/* Block B - Allocation Shift */}
-          <div style={{ minHeight: '120px' }}>
-            <h3 className="text-[13px] font-medium text-[#161916] mb-2">Where the work goes</h3>
-
-            {/* Bar 1 - TODAY */}
-            <div className="flex items-center gap-4 mb-4">
-              <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide w-[60px]">
-                Today
+        {showCaveats ? (
+          <div className="mt-4 space-y-4">
+            {extractionWarnings.map((warning) => (
+              <div
+                key={warning}
+                className="bg-[#FFF0DC] border border-[#FFAB28]/25 rounded-lg px-4 py-3 text-[13px] text-[#494949]"
+              >
+                {warning}
               </div>
-              <div className="flex-1 h-6 bg-[#6D7069] rounded-full flex items-center justify-center">
-                <span className="text-[12px] font-medium text-white">100% Human</span>
-              </div>
-            </div>
-
-            {/* Bar 2 - FUTURE */}
-            <div className="flex items-center gap-4 mb-2">
-              <div className="text-[11px] font-semibold text-[#FD4E59] uppercase tracking-wide w-[60px]">
-                Future
-              </div>
-              <div className="flex-1 h-6 rounded-full overflow-hidden flex">
-                <div className="bg-[#6D7069] flex items-center justify-center" style={{ width: '38%' }}>
-                  <span className="text-[11px] font-medium text-white">Human 38%</span>
-                </div>
-                <div className="bg-[#FFAB28] flex items-center justify-center" style={{ width: '42%' }}>
-                  <span className="text-[11px] font-medium text-white">Assisted 42%</span>
-                </div>
-                <div className="bg-[#548235] flex items-center justify-center" style={{ width: '20%' }}>
-                  <span className="text-[11px] font-medium text-white">Automated 20%</span>
-                </div>
-              </div>
-            </div>
-
-            <p className="text-[13px] italic text-[#494949] mt-2">
-              62% of work-hours shifted to AI-assisted or automated. Human time refocused on judgment, coaching, and
-              exception handling.
+            ))}
+            {dataGaps.length > 0 ? (
+              <ul className="list-disc pl-5 space-y-1 text-[13px] text-[#494949]">
+                {dataGaps.map((gap) => (
+                  <li key={gap}>{gap}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-[13px] text-[#6D7069]">No additional data gaps flagged.</p>
+            )}
+            <p className="text-[13px] italic text-[#6D7069]">
+              All financial values are illustrative based on industry assumptions.
             </p>
           </div>
-        </div>
+        ) : null}
       </div>
 
-      {/* Section 4 - Risk & Escalation Evidence */}
-      <div className="mb-4">
-        <div className="bg-[#FFF0DC] border-l-4 border-[#FFAB28] rounded-xl p-6 flex items-center justify-between" style={{ minHeight: '64px' }}>
-          <div className="flex items-center gap-4">
-            <Shield className="w-5 h-5 text-[#FFAB28] flex-shrink-0" />
-            <div>
-              <span className="text-[14px] font-medium text-[#161916]">Risk & Escalation evidence</span>
-              <span className="text-[13px] text-[#494949] ml-3">
-                Governance score: STRONG · 1 advisory
-              </span>
-            </div>
-          </div>
-          <button
-            onClick={() => setShowRiskDetails(!showRiskDetails)}
-            className="h-9 px-5 border border-[#FD4E59] text-[#FD4E59] text-[13px] font-medium rounded-md hover:bg-[#FD4E59]/5 flex items-center gap-2"
-          >
-            Show details {showRiskDetails ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </button>
-        </div>
-
-        {/* Expanded Risk Details */}
-        {showRiskDetails && (
-          <div className="mt-4 grid grid-cols-2 gap-4">
-            {/* Risk × Control Matrix */}
-            <div className="bg-white border border-[#494949]/12 rounded-xl p-5">
-              <h4 className="text-[14px] font-bold text-[#161916] mb-3">Risk × Control matrix</h4>
-
-              {/* KPI Strip */}
-              <div className="flex gap-4 mb-3">
-                <div className="flex-1">
-                  <div className="text-[11px] font-semibold text-[#548235] uppercase tracking-wide">Preventive</div>
-                  <div className="text-[18px] font-bold text-[#548235]">100%</div>
-                </div>
-                <div className="w-px bg-[#494949]/12" />
-                <div className="flex-1">
-                  <div className="text-[11px] font-semibold text-[#FFAB28] uppercase tracking-wide">Detective</div>
-                  <div className="text-[18px] font-bold text-[#FFAB28]">92%</div>
-                </div>
-                <div className="w-px bg-[#494949]/12" />
-                <div className="flex-1">
-                  <div className="text-[11px] font-semibold text-[#548235] uppercase tracking-wide">Regulatory</div>
-                  <div className="text-[18px] font-bold text-[#548235]">100%</div>
-                </div>
-              </div>
-
-              {/* Matrix Table */}
-              <div className="border border-[#494949]/12 rounded overflow-hidden">
-                <table className="w-full text-[12px]">
-                  <thead>
-                    <tr className="bg-[#FDF8F4]">
-                      <th className="text-left p-2 text-[11px] font-semibold text-[#6D7069] uppercase">Risk</th>
-                      <th className="text-left p-2 text-[11px] font-semibold text-[#6D7069] uppercase">Prev</th>
-                      <th className="text-left p-2 text-[11px] font-semibold text-[#6D7069] uppercase">Det</th>
-                      <th className="text-left p-2 text-[11px] font-semibold text-[#6D7069] uppercase">Corr</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-t border-[#494949]/12">
-                      <td className="p-2">
-                        CSAM{' '}
-                        <span className="inline-block px-2 py-0.5 bg-[#FCE4D6] text-[#FD4E59] text-[10px] font-semibold uppercase rounded">
-                          CRIT
-                        </span>
-                      </td>
-                      <td className="p-2">✓ 2</td>
-                      <td className="p-2">✓ 1+1 NEW</td>
-                      <td className="p-2">✓ 1</td>
-                    </tr>
-                    <tr className="border-t border-[#494949]/12">
-                      <td className="p-2">
-                        Violent extremism{' '}
-                        <span className="inline-block px-2 py-0.5 bg-[#FCE4D6] text-[#FD4E59] text-[10px] font-semibold uppercase rounded">
-                          CRIT
-                        </span>
-                      </td>
-                      <td className="p-2">✓ 2</td>
-                      <td className="p-2">✓ 1</td>
-                      <td className="p-2">✓ 1</td>
-                    </tr>
-                    <tr className="border-t border-[#494949]/12">
-                      <td className="p-2">
-                        Self-harm{' '}
-                        <span className="inline-block px-2 py-0.5 bg-[#FFF0DC] text-[#FFAB28] text-[10px] font-semibold uppercase rounded">
-                          HIGH
-                        </span>
-                      </td>
-                      <td className="p-2">✓ 1</td>
-                      <td className="p-2">✓ 1</td>
-                      <td className="p-2">—</td>
-                    </tr>
-                    <tr className="border-t border-[#494949]/12 bg-[#FCE4D6]/20">
-                      <td className="p-2">
-                        Hate speech{' '}
-                        <span className="inline-block px-2 py-0.5 bg-[#FFF0DC] text-[#FFAB28] text-[10px] font-semibold uppercase rounded">
-                          HIGH
-                        </span>
-                      </td>
-                      <td className="p-2">✓ 1</td>
-                      <td className="p-2 text-[#FD4E59]">⚠ 1 only</td>
-                      <td className="p-2">—</td>
-                    </tr>
-                    <tr className="border-t border-[#494949]/12">
-                      <td className="p-2">
-                        Spam{' '}
-                        <span className="inline-block px-2 py-0.5 bg-[#E2EFDA] text-[#548235] text-[10px] font-semibold uppercase rounded">
-                          LOW
-                        </span>
-                      </td>
-                      <td className="p-2">✓ 1 AUTO</td>
-                      <td className="p-2">✓ 1 AUTO</td>
-                      <td className="p-2">—</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Escalation Flow */}
-            <div className="bg-white border border-[#494949]/12 rounded-xl p-5">
-              <h4 className="text-[14px] font-bold text-[#161916] mb-3">Escalation flow — today vs future</h4>
-
-              <div className="grid grid-cols-2 gap-4">
-                {/* Today */}
-                <div>
-                  <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">Today</div>
-                  <div className="flex flex-col gap-2">
-                    <div className="text-[11px] text-[#161916]">Item</div>
-                    <div className="text-[11px] text-[#6D7069]">↓</div>
-                    <div className="px-2 py-1 bg-[#FFF0DC] border border-[#6D7069] rounded text-[11px] text-center">
-                      Agent
-                    </div>
-                    <div className="text-[11px] text-[#6D7069]">↓ 15m</div>
-                    <div className="px-2 py-1 bg-[#FFF0DC] border border-[#6D7069] rounded text-[11px] text-center">
-                      TL
-                    </div>
-                    <div className="text-[11px] text-[#6D7069]">↓ 60m</div>
-                    <div className="px-2 py-1 bg-[#FFF0DC] border border-[#6D7069] rounded text-[11px] text-center">
-                      QA Off
-                    </div>
-                    <div className="text-[11px] text-[#6D7069]">↓</div>
-                    <div className="px-2 py-1 bg-[#FFF0DC] border border-[#6D7069] rounded text-[11px] text-center">
-                      Unit Head
-                    </div>
-                  </div>
-                </div>
-
-                {/* Future */}
-                <div>
-                  <div className="text-[11px] font-semibold text-[#FD4E59] uppercase tracking-wide mb-2">Future</div>
-                  <div className="flex flex-col gap-2">
-                    <div className="text-[11px] text-[#161916]">Item</div>
-                    <div className="text-[11px] text-[#6D7069]">↓</div>
-                    <div className="px-2 py-1 bg-[#FDF8F4] border border-[#FD4E59] rounded text-[11px] text-center flex items-center justify-center gap-1">
-                      <Sparkles className="w-3 h-3 text-[#FD4E59]" />
-                      AI pre-triage
-                    </div>
-                    <div className="text-[11px] text-[#6D7069]">↓ 5m</div>
-                    <div className="px-2 py-1 bg-[#FFF0DC] border border-[#6D7069] rounded text-[11px] text-center">
-                      Agent
-                    </div>
-                    <div className="text-[11px] text-[#6D7069]">↓ 15m</div>
-                    <div className="px-2 py-1 bg-[#FFF0DC] border border-[#6D7069] rounded text-[11px] text-center">
-                      TL
-                    </div>
-                    <div className="text-[11px] text-[#6D7069]">↓ 60m</div>
-                    <div className="px-2 py-1 bg-[#FFF0DC] border border-[#6D7069] rounded text-[11px] text-center">
-                      QA Off
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <p className="text-[12px] text-[#494949] mt-3">
-                1 new AI pre-triage node · 1 new role (AI Output Auditor) handling low-confidence flags.
-              </p>
-            </div>
-          </div>
-        )}
+      {/* Section 7 — Limitations */}
+      <div className="bg-white border border-[#494949]/12 rounded-xl p-6 mb-8">
+        <h2 className="text-[13px] font-medium text-[#6D7069] uppercase tracking-wide mb-3">
+          Limitations of this analysis
+        </h2>
+        <ul className="list-disc pl-5 space-y-2">
+          {limitations.map((item) => (
+            <li key={item} className="text-[13px] italic text-[#6D7069]">
+              {item}
+            </li>
+          ))}
+        </ul>
       </div>
 
-      {/* Section 5 - What This Analysis Assumes */}
-      <div className="bg-[#FFF0DC] rounded-xl p-6 mb-6">
-        <div className="flex items-center gap-2 mb-3">
-          <Info className="w-4 h-4 text-[#6D7069]" />
-          <h2 className="text-[13px] font-medium text-[#6D7069] uppercase tracking-widest">
-            What this analysis assumes
-          </h2>
-        </div>
-        <div className="space-y-2">
-          <p className="text-[13px] text-[#494949]">
-            • Numbers are illustrative; real engagement values may differ
-          </p>
-          <p className="text-[13px] text-[#494949]">
-            • Transition costs include tech build, retraining, and change management — but not severance by geography
-          </p>
-          <p className="text-[13px] text-[#494949]">
-            • Billing model impact is not yet modeled — coordinate with commercial before final pricing
-          </p>
-          <p className="text-[13px] text-[#494949]">
-            • Client tech readiness and procurement timelines may extend the 9-month rollout
-          </p>
-        </div>
-      </div>
-
-      {/* Section 6 - Final CTA */}
-      <div className="flex items-center justify-end pt-6">
-        <button className="h-12 px-7 bg-[#FD4E59] text-white text-[15px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2 shadow-lg">
-          <Download className="w-5 h-5" />
-          Export final deck
+      {/* Section 8 — Export */}
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={handleExport}
+          className="h-11 px-6 bg-[#FD4E59] text-white text-[13px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2"
+        >
+          Export full report →
         </button>
       </div>
     </div>

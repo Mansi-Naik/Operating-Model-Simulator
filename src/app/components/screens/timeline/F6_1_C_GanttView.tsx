@@ -1,4 +1,4 @@
-import { ChevronLeft, GitBranch, Info, Sparkles } from 'lucide-react';
+import { ArrowRight, ChevronLeft, GitBranch, Info, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../../supabaseClient';
 import { F6_4_PhaseDetailDrawer } from './F6_4_PhaseDetailDrawer';
@@ -446,30 +446,34 @@ export function F6_1_C_GanttView({
         </div>
       </div>
 
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onViewDependencies}
-            className="h-10 px-5 border border-[#494949]/30 text-[#494949] text-[13px] font-semibold rounded-md hover:bg-[#494949]/5"
-          >
-            View dependencies
-          </button>
-          <button
-            type="button"
-            onClick={() => setSelectedPhaseId(Math.round(toNum(phases[0]?.phase_id, 1)))}
-            disabled={phases.length === 0}
-            className="h-10 px-5 border border-[#494949]/30 text-[#494949] text-[13px] font-semibold rounded-md hover:bg-[#494949]/5"
-          >
-            View phase details
-          </button>
-        </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onViewDependencies}
+          className="h-10 px-5 border border-[#494949]/30 text-[#494949] text-[13px] font-semibold rounded-md hover:bg-[#494949]/5"
+        >
+          View dependencies
+        </button>
+        <button
+          type="button"
+          onClick={() => setSelectedPhaseId(Math.round(toNum(phases[0]?.phase_id, 1)))}
+          disabled={phases.length === 0}
+          className="h-10 px-5 border border-[#494949]/30 text-[#494949] text-[13px] font-semibold rounded-md hover:bg-[#494949]/5"
+        >
+          View phase details
+        </button>
+      </div>
+
+      <div className="mt-8 flex justify-end">
         <button
           type="button"
           onClick={onProceedToF7}
-          className="h-10 px-5 bg-[#FD4E59] text-white text-[13px] font-semibold rounded-md hover:bg-[#FD4E59]/90"
+          disabled={!timeline || Object.keys(timeline).length === 0}
+          title={!timeline || Object.keys(timeline).length === 0 ? 'Generate the timeline first.' : undefined}
+          className="h-12 px-8 bg-[#FD4E59] text-white text-[15px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2 shadow-sm disabled:opacity-50 disabled:pointer-events-none"
         >
-          Proceed to Summary →
+          Proceed to Summary
+          <ArrowRight className="w-5 h-5" />
         </button>
       </div>
     </div>
