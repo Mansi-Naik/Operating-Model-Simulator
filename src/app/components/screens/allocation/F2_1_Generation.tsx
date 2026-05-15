@@ -24,6 +24,7 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
   const [capabilitiesDone, setCapabilitiesDone] = useState(false);
   const [calibrationDone, setCalibrationDone] = useState(false);
   const [validationDone, setValidationDone] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   const progressPercent = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
   const progressLabel = totalTasks > 0 ? `Task ${completedTasks} of ${totalTasks}` : 'Task 0 of 0';
@@ -64,6 +65,7 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
   useEffect(() => {
     cancelRef.current = false;
     const run = async () => {
+      setGenerationError(null);
       if (!activeEngagementId) {
         console.error('[F2.1] Missing engagement id');
         onCancel();
@@ -76,6 +78,7 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
       setCompletedTasks(0);
       if (!rows || rows.length === 0) {
         console.warn('[F2.1] No tasks to process. Aborting loop.');
+        setGenerationError('No tasks found for this engagement. Add tasks in intake before generating the matrix.');
         return;
       }
 
@@ -135,6 +138,20 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
       if (cancelRef.current) return;
       setCalibrationDone(true);
       setValidationDone(true);
+
+      if (processedTaskIds.length === 0) {
+        setGenerationError(
+          failedTaskIds.length > 0
+            ? `Allocation failed for all ${rows.length} tasks. Ensure the API is running (e.g. npm run dev:vercel) and GEMINI_API_KEY is set, then try again.`
+            : 'No allocation results were saved.',
+        );
+        return;
+      }
+
+      if (failedTaskIds.length > 0) {
+        console.warn('[F2.1] Partial allocation failures:', { failedTaskIds });
+      }
+
       await onComplete?.({ processedTaskIds, failedTaskIds, total: rows.length });
     };
 
@@ -186,6 +203,12 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
             />
           </div>
         </div>
+
+        {generationError ? (
+          <div className="mb-6 text-[14px] text-[#FD4E59] border border-[#FD4E59]/30 rounded-lg p-4 bg-[#FCE4D6]/30">
+            {generationError}
+          </div>
+        ) : null}
 
         {/* Pipeline Stages */}
         <div className="bg-[#FDF8F4] border border-[#494949]/12 rounded-xl p-6 mb-6">

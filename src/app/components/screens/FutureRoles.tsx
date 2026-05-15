@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useEngagement } from '../../../hooks/useEngagement';
 import { computeF3PreRunPreview } from '../../../lib/f3PreRunPreview';
 import { F3_0_PreRun } from './roles/F3_0_PreRun';
@@ -23,6 +23,12 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2 }: FutureRolesProp
 
   const [currentScreen, setCurrentScreen] = useState<RolesScreen>('pre-run');
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (engagementIdFromUrl) {
+      void loadEngagement(engagementIdFromUrl);
+    }
+  }, [engagementIdFromUrl, loadEngagement]);
 
   const preview = useMemo(
     () => computeF3PreRunPreview(tasks, engagement as Record<string, unknown> | null),

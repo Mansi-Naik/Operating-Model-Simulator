@@ -5,6 +5,7 @@ import { F2_2_MatrixView } from './allocation/F2_2_MatrixView';
 import { F2_3_TaskDrawer } from './allocation/F2_3_TaskDrawer';
 import { F2_5_BulkModal } from './allocation/F2_5_BulkModal';
 import { useEngagement } from '../../../hooks/useEngagement';
+import { getFinalAllocation } from '../../../lib/roleAggregation';
 
 type AllocationScreen = 'pre-run' | 'generating' | 'matrix-view';
 
@@ -100,10 +101,19 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
             engagementId={generationInput.engagementId}
             onComplete={async (result) => {
               setGenerationResult(result);
+              let loadedTasks: Record<string, unknown>[] = [];
               if (generationInput.engagementId) {
-                await loadEngagement(generationInput.engagementId);
+                const loaded = await loadEngagement(generationInput.engagementId);
+                loadedTasks = Array.isArray(loaded?.tasks) ? (loaded.tasks as Record<string, unknown>[]) : [];
               }
-              setCurrentScreen('matrix-view');
+              const allAllocated =
+                loadedTasks.length > 0 &&
+                loadedTasks.every((t) => getFinalAllocation(t).length > 0);
+              if (allAllocated) {
+                setCurrentScreen('matrix-view');
+              } else {
+                setCurrentScreen('pre-run');
+              }
             }}
           />
         );

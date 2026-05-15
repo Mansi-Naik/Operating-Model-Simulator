@@ -125,9 +125,8 @@ export function F2_2_MatrixView({
     });
   }, [dbTasks]);
   const allTaskRows = Array.isArray(dbTasks) ? dbTasks : [];
-  const hasAnySavedAllocation = allTaskRows.some((row: any) => finalAllocation(row));
-  const matrixReady = allTaskRows.length > 0 && (hasAnySavedAllocation || Boolean(generationResult?.total));
   const fallbackCount = allTaskRows.filter((row: any) => !finalAllocation(row)).length;
+  const matrixReady = allTaskRows.length > 0 && fallbackCount === 0;
   const roleOptions = useMemo(() => ['All', ...Array.from(new Set(tasks.map((t) => t.role)))], [tasks]);
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
