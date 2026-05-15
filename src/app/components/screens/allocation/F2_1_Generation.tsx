@@ -84,6 +84,8 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
 
       const processedTaskIds = [];
       const failedTaskIds = [];
+      /** First failed request detail (same root cause often repeats for every task). */
+      let firstFailureSummary: string | null = null;
 
       for (let i = 0; i < rows.length; i += 1) {
         if (cancelRef.current) return;
@@ -115,6 +117,20 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
           }
           if (!response.ok) {
             console.error('[F2.1] /api/predict-allocation failed:', { taskId, status: response.status, responseBody });
+            if (!firstFailureSummary) {
+              const obj =
+                responseBody && typeof responseBody === 'object' && !Array.isArray(responseBody)
+                  ? (responseBody as Record<string, unknown>)
+                  : null;
+              const errPart = obj?.error != null ? String(obj.error) : null;
+              const detPart = obj?.details != null ? String(obj.details) : null;
+              const combined = [errPart, detPart].filter(Boolean).join(' — ');
+              const fallback =
+                typeof responseBody === 'string'
+                  ? responseBody.slice(0, 400)
+                  : combined || JSON.stringify(responseBody).slice(0, 400);
+              firstFailureSummary = `HTTP ${response.status}: ${fallback || 'No response body'}`;
+            }
             failedTaskIds.push(taskId);
           } else {
             processedTaskIds.push(taskId);
@@ -123,6 +139,14 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
           if (!cancelRef.current) {
             console.error('[F2.1] Caught error:', err);
             console.error('[F2.1] Task prediction error:', { taskId, err });
+            if (!firstFailureSummary) {
+              const msg = err instanceof Error ? err.message : String(err);
+              const networkHint =
+                /failed to fetch|networkerror|load failed|econnrefused|connection refused/i.test(msg)
+                  ? ' Vite proxies `/api/*` to http://localhost:3000 — nothing was listening there, or use `npm run dev:vercel` so `/api` runs on the same origin.'
+                  : '';
+              firstFailureSummary = `${msg}.${networkHint}`;
+            }
             failedTaskIds.push(taskId);
           }
         } finally {
@@ -142,7 +166,15 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
       if (processedTaskIds.length === 0) {
         setGenerationError(
           failedTaskIds.length > 0
-            ? `Allocation failed for all ${rows.length} tasks. Ensure the API is running (e.g. npm run dev:vercel) and GEMINI_API_KEY is set, then try again.`
+            ? [
+                `Allocation failed for all ${rows.length} tasks.`,
+                firstFailureSummary ? `First error: ${firstFailureSummary}` : '',
+                '',
+                'Gemini key issues usually show as HTTP 500 with "Missing GEMINI_API_KEY" or a model error in the response. If you only run `npm run dev` (Vite), the UI calls /api which must be served — prefer `npm run dev:vercel`, or run another process on port 3000 (Vite proxies /api there).',
+                'Open DevTools → Network → predict-allocation → Response to see the exact JSON error.',
+              ]
+                .filter(Boolean)
+                .join('\n')
             : 'No allocation results were saved.',
         );
         return;
@@ -205,7 +237,7 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
         </div>
 
         {generationError ? (
-          <div className="mb-6 text-[14px] text-[#FD4E59] border border-[#FD4E59]/30 rounded-lg p-4 bg-[#FCE4D6]/30">
+          <div className="mb-6 text-[14px] text-[#FD4E59] border border-[#FD4E59]/30 rounded-lg p-4 bg-[#FCE4D6]/30 whitespace-pre-wrap break-words">
             {generationError}
           </div>
         ) : null}
