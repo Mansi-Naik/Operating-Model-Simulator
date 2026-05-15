@@ -12,7 +12,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEngagement } from '../../../hooks/useEngagement';
 import { aggregateSummary } from '../../../lib/summaryAggregator';
-import { downloadSummaryAsPdf } from '../../../lib/summaryPdfExport';
+import { downloadSummaryReportPdf } from '../../../lib/summaryPdfExport';
 import { getFinalAllocation } from '../../../lib/roleAggregation';
 import { supabase } from '../../../supabaseClient';
 
@@ -200,7 +200,6 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
   const [showCaveats, setShowCaveats] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [pdfExporting, setPdfExporting] = useState(false);
-  const printRef = useRef<HTMLDivElement>(null);
   const savedF7Ref = useRef<string | null>(null);
 
   const loadPipeline = useCallback(async () => {
@@ -332,8 +331,7 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
     todayHumanVol > 0 ? Math.round((futureHumanVol / todayHumanVol) * 100) : 0;
 
   const handleExport = async () => {
-    const el = printRef.current;
-    if (!el || pdfExporting) return;
+    if (!summary || pdfExporting) return;
 
     setPdfExporting(true);
     setExportNotice(null);
@@ -341,21 +339,12 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
     const clientName =
       engagement && typeof (engagement as Record<string, unknown>).client_name === 'string'
         ? String((engagement as Record<string, unknown>).client_name).trim()
-        : 'engagement';
+        : 'Engagement';
     const dateStamp = new Date().toISOString().slice(0, 10);
     const fileBase = `${clientName}-operating-model-summary-${dateStamp}`;
 
-    const prevRisk = showRiskDetails;
-    const prevCaveats = showCaveats;
-
     try {
-      setShowRiskDetails(true);
-      setShowCaveats(true);
-      await new Promise((r) => window.setTimeout(r, 200));
-      printRef.current?.scrollIntoView({ block: 'start' });
-
-      await downloadSummaryAsPdf(el, fileBase);
-
+      await downloadSummaryReportPdf(summary as Record<string, unknown>, clientName, fileBase);
       setExportNotice('Report downloaded as PDF.');
       window.setTimeout(() => setExportNotice(null), 4000);
     } catch (err) {
@@ -364,8 +353,6 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
       window.setTimeout(() => setExportNotice(null), 6000);
     } finally {
       setPdfExporting(false);
-      setShowRiskDetails(prevRisk);
-      setShowCaveats(prevCaveats);
     }
   };
 
@@ -428,7 +415,6 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
         </button>
       ) : null}
 
-      <div ref={printRef} className="rounded-xl bg-white p-2 sm:p-4">
       {missingFeatures.length > 0 ? (
         <div className="mb-6 bg-[#FFF0DC] border border-[#FFAB28]/30 rounded-xl p-5">
           <p className="text-[14px] text-[#161916] mb-3">
@@ -736,7 +722,6 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
             </li>
           ))}
         </ul>
-      </div>
       </div>
 
       {/* Section 8 — Export */}
