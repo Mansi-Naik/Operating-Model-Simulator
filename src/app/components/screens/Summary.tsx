@@ -7,10 +7,12 @@ import {
   Circle,
   ArrowDown,
   ArrowUp,
+  Loader2,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEngagement } from '../../../hooks/useEngagement';
 import { aggregateSummary } from '../../../lib/summaryAggregator';
+import { downloadSummaryAsPdf } from '../../../lib/summaryPdfExport';
 import { getFinalAllocation } from '../../../lib/roleAggregation';
 import { supabase } from '../../../supabaseClient';
 
@@ -197,6 +199,8 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
   const [showRiskDetails, setShowRiskDetails] = useState(true);
   const [showCaveats, setShowCaveats] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [pdfExporting, setPdfExporting] = useState(false);
+  const printRef = useRef<HTMLDivElement>(null);
   const savedF7Ref = useRef<string | null>(null);
 
   const loadPipeline = useCallback(async () => {
@@ -327,9 +331,42 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
   const futureHumanPct =
     todayHumanVol > 0 ? Math.round((futureHumanVol / todayHumanVol) * 100) : 0;
 
-  const handleExport = () => {
-    setExportNotice('Export coming soon — full report PDF is on the roadmap.');
-    window.setTimeout(() => setExportNotice(null), 4000);
+  const handleExport = async () => {
+    const el = printRef.current;
+    if (!el || pdfExporting) return;
+
+    setPdfExporting(true);
+    setExportNotice(null);
+
+    const clientName =
+      engagement && typeof (engagement as Record<string, unknown>).client_name === 'string'
+        ? String((engagement as Record<string, unknown>).client_name).trim()
+        : 'engagement';
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const fileBase = `${clientName}-operating-model-summary-${dateStamp}`;
+
+    const prevRisk = showRiskDetails;
+    const prevCaveats = showCaveats;
+
+    try {
+      setShowRiskDetails(true);
+      setShowCaveats(true);
+      await new Promise((r) => window.setTimeout(r, 200));
+      printRef.current?.scrollIntoView({ block: 'start' });
+
+      await downloadSummaryAsPdf(el, fileBase);
+
+      setExportNotice('Report downloaded as PDF.');
+      window.setTimeout(() => setExportNotice(null), 4000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Could not create PDF.';
+      setExportNotice(msg);
+      window.setTimeout(() => setExportNotice(null), 6000);
+    } finally {
+      setPdfExporting(false);
+      setShowRiskDetails(prevRisk);
+      setShowCaveats(prevCaveats);
+    }
   };
 
   const featureRoute = (feature: string) => {
@@ -391,6 +428,7 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
         </button>
       ) : null}
 
+      <div ref={printRef} className="rounded-xl bg-white p-2 sm:p-4">
       {missingFeatures.length > 0 ? (
         <div className="mb-6 bg-[#FFF0DC] border border-[#FFAB28]/30 rounded-xl p-5">
           <p className="text-[14px] text-[#161916] mb-3">
@@ -699,14 +737,17 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
           ))}
         </ul>
       </div>
+      </div>
 
       {/* Section 8 — Export */}
       <div className="flex justify-end">
         <button
           type="button"
-          onClick={handleExport}
-          className="h-11 px-6 bg-[#FD4E59] text-white text-[13px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2"
+          onClick={() => void handleExport()}
+          disabled={pdfExporting || !summary}
+          className="h-11 px-6 bg-[#FD4E59] text-white text-[13px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2 disabled:opacity-50 disabled:pointer-events-none"
         >
+          {pdfExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
           Export full report →
         </button>
       </div>
