@@ -501,6 +501,9 @@ export default async function handler(req, res) {
       day_in_the_life: p.day_in_the_life,
       key_transition_risks: p.key_transition_risks,
       generated_at,
+      acceptance_status: 'pending',
+      accepted_at: null,
+      rejected_at: null,
     }
 
     const { data: prRow, error: prSelErr } = await supabase

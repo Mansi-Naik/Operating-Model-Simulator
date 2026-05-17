@@ -13,6 +13,7 @@ import { PodStructure } from './components/screens/PodStructure';
 import { Economics } from './components/screens/Economics';
 import { Timeline } from './components/screens/Timeline';
 import { Summary } from './components/screens/Summary';
+import { Toaster } from './components/ui/sonner';
 
 type Screen = 'mode-selector' | 'guided-form' | 'upload' | 'reconciliation' | 'readiness-review' | 'allocation-matrix' | 'future-roles' | 'pod-structure' | 'economics' | 'timeline' | 'summary' | 'locked';
 type PodStartScreen = 'pre-run' | 'variant-selector' | 'org-rollup';
@@ -295,6 +296,7 @@ export default function App() {
       </div>
 
       <FooterStatusBar versions={getVersionChips()} />
+      <Toaster position="top-center" richColors closeButton />
     </div>
   );
 }

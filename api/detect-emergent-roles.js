@@ -240,6 +240,19 @@ export default async function handler(req, res) {
 
     const tasks = Array.isArray(taskRows) ? taskRows.map((t) => /** @type {Record<string, unknown>} */ (t)) : []
 
+    let automatedTaskCount = 0
+    let assistedTaskCount = 0
+    let humanTaskCount = 0
+    for (const t of tasks) {
+      const alloc = getFinalAllocation(t)
+      if (alloc === 'tech-automated') automatedTaskCount += 1
+      else if (alloc === 'tech-assisted') assistedTaskCount += 1
+      else if (alloc === 'human-only') humanTaskCount += 1
+    }
+    const totalTasks = tasks.length
+    const totalAutomationCoverage =
+      totalTasks > 0 ? (automatedTaskCount + assistedTaskCount) / totalTasks : 0
+
     const { data: prRow, error: prSelErr } = await supabase
       .from('pipeline_runs')
       .select('id, f3_roles')
@@ -253,6 +266,50 @@ export default async function handler(req, res) {
 
     const f3Bundle = normalizeF3Roles(prRow?.f3_roles)
     const redesigned_roles = dedupeLatestRedesignsByRole(f3Bundle.redesigns)
+
+    if (totalAutomationCoverage < 0.1) {
+      const emergent_roles_meta = {
+        reason: 'no_automation_activity',
+        automatedTaskCount,
+        assistedTaskCount,
+        humanTaskCount,
+        totalAutomationCoverage,
+        message: 'Insufficient AI activity to justify emergent role creation',
+      }
+      const nextF3 = f3RolesToJsonb({
+        ...f3Bundle,
+        emergent_roles: [],
+        emergent_roles_meta,
+      })
+
+      if (prRow?.id) {
+        const { error: upErr } = await supabase
+          .from('pipeline_runs')
+          .update({ f3_roles: nextF3 })
+          .eq('id', prRow.id)
+        if (upErr) throw new Error(`pipeline_runs update failed: ${upErr.message}`)
+      } else {
+        const { error: insErr } = await supabase.from('pipeline_runs').insert({
+          engagement_id: engagementId,
+          f3_roles: nextF3,
+        })
+        if (insErr) throw new Error(`pipeline_runs insert failed: ${insErr.message}`)
+      }
+
+      res.status(200).json({
+        engagementId,
+        emergent_roles: [],
+        skipped: true,
+        reason: emergent_roles_meta.message,
+        automation_stats: {
+          automatedTaskCount,
+          assistedTaskCount,
+          humanTaskCount,
+          totalAutomationCoverage,
+        },
+      })
+      return
+    }
 
     const engagementRecord = /** @type {Record<string, unknown>} */ (engagementRow)
     const { domain, automation_appetite } = engagementToEmergentContext(engagementRecord)
@@ -288,6 +345,12 @@ export default async function handler(req, res) {
       automated_tasks,
       cross_task_advisories,
       redesigned_roles,
+      automation_stats: {
+        automatedTaskCount,
+        assistedTaskCount,
+        humanTaskCount,
+        totalAutomationCoverage,
+      },
     })
 
     const genAI = new GoogleGenerativeAI(apiKey)
@@ -359,7 +422,14 @@ export default async function handler(req, res) {
       return
     }
 
-    const emergent_roles = /** @type {Record<string, unknown>[]} */ (parsed.value.emergent_roles)
+    const emergent_roles = /** @type {Record<string, unknown>[]} */ (parsed.value.emergent_roles).map(
+      (row) => ({
+        ...row,
+        acceptance_status: 'pending',
+        accepted_at: null,
+        rejected_at: null,
+      }),
+    )
 
     const { error: logInsertErr } = await insertLlmCallLog(supabase, {
       engagement_id: engagementId,
@@ -380,8 +450,9 @@ export default async function handler(req, res) {
     }
 
     const nextF3 = f3RolesToJsonb({
-      ...f3Bundle,
+      redesigns: f3Bundle.redesigns,
       emergent_roles,
+      emergent_roles_meta: null,
     })
 
     if (prRow?.id) {

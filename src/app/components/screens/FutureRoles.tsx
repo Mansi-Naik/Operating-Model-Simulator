@@ -23,6 +23,7 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2 }: FutureRolesProp
 
   const [currentScreen, setCurrentScreen] = useState<RolesScreen>('pre-run');
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
+  const [selectedEmergentRole, setSelectedEmergentRole] = useState<string | null>(null);
 
   useEffect(() => {
     if (engagementIdFromUrl) {
@@ -56,7 +57,8 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2 }: FutureRolesProp
     setCurrentScreen('role-detail');
   };
 
-  const handleEmergentRoleClick = (_roleName: string) => {
+  const handleEmergentRoleClick = (roleName: string) => {
+    setSelectedEmergentRole(roleName);
     setCurrentScreen('emergent-role-detail');
   };
 
@@ -118,7 +120,13 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2 }: FutureRolesProp
           />
         );
       case 'emergent-role-detail':
-        return <F3_3_EmergentRoleDetail onBack={handleBackToGrid} />;
+        return (
+          <F3_3_EmergentRoleDetail
+            onBack={handleBackToGrid}
+            roleName={selectedEmergentRole}
+            engagementId={engagementIdFromUrl}
+          />
+        );
     }
   };
 

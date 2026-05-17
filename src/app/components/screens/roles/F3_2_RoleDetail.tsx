@@ -1,6 +1,9 @@
 import { ChevronLeft, Eye, Download, Edit, Check, Plus, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { useEngagement } from '../../../../hooks/useEngagement';
+import { updateF3RoleAcceptance } from '../../../../lib/f3AcceptanceClient';
+import { getAcceptanceStatus } from '../../../../lib/f3RolesStorage';
 import {
   DonutSegment,
   feasibilityChipClasses,
@@ -46,6 +49,8 @@ export function F3_2_RoleDetail({ onBack, roleName, engagementId }: F3_2_RoleDet
   const [redesign, setRedesign] = useState<Record<string, unknown> | null>(null);
   const [sourceTasks, setSourceTasks] = useState<Record<string, unknown>[]>([]);
   const [showSourceModal, setShowSourceModal] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [acceptanceStatus, setAcceptanceStatus] = useState<'pending' | 'accepted' | 'rejected'>('pending');
 
   useEffect(() => {
     if (!activeEngagementId || !resolvedRole) {
@@ -86,6 +91,7 @@ export function F3_2_RoleDetail({ onBack, roleName, engagementId }: F3_2_RoleDet
         setAggregate(agg);
         setHierarchyRow(hi);
         setRedesign(rd);
+        setAcceptanceStatus(getAcceptanceStatus(rd));
         setSourceTasks(filtered);
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Failed to load role detail');
@@ -147,6 +153,30 @@ export function F3_2_RoleDetail({ onBack, roleName, engagementId }: F3_2_RoleDet
 
   const feasibilityNarrative = feasibilityNarrativeLine(feasibilityStatus, patternStr);
   const risksText = keyRisks.length > 0 ? keyRisks.join(' ') : '—';
+
+  const handleAcceptance = useCallback(
+    async (status: 'accepted' | 'rejected' | 'pending') => {
+      if (!activeEngagementId || !resolvedRole || actionBusy) return;
+      if (status === 'rejected') {
+        const ok = window.confirm('Reject this role? It will be excluded from downstream features.');
+        if (!ok) return;
+      }
+      setActionBusy(true);
+      try {
+        await updateF3RoleAcceptance(activeEngagementId, 'redesign', resolvedRole, status);
+        setAcceptanceStatus(status);
+        if (status === 'accepted') toast.success('Role accepted');
+        else if (status === 'rejected') toast.success('Role rejected');
+        else toast.message('Role moved back to pending');
+        if (status === 'rejected') onBack();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to update role');
+      } finally {
+        setActionBusy(false);
+      }
+    },
+    [activeEngagementId, resolvedRole, actionBusy, onBack],
+  );
 
   const DonutChart = ({ segments, showChanges = false }: { segments: DonutSegment[]; showChanges?: boolean }) => {
     let cumulativePercent = 0;
@@ -453,6 +483,42 @@ export function F3_2_RoleDetail({ onBack, roleName, engagementId }: F3_2_RoleDet
           <p className="text-[13px] text-[#494949]">{risksText}</p>
         </div>
       </div>
+
+      {acceptanceStatus !== 'rejected' ? (
+        <div className="flex items-center justify-end gap-3 mb-8 mt-6">
+          {acceptanceStatus === 'accepted' ? (
+            <button
+              type="button"
+              disabled={actionBusy}
+              onClick={() => void handleAcceptance('pending')}
+              className="text-[14px] text-[#6D7069] font-medium hover:underline disabled:opacity-50"
+            >
+              Reconsider
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled={actionBusy}
+                onClick={() => void handleAcceptance('rejected')}
+                className="text-[14px] text-[#FD4E59] font-medium hover:underline flex items-center gap-2 disabled:opacity-50"
+              >
+                <X className="w-4 h-4" />
+                Reject role
+              </button>
+              <button
+                type="button"
+                disabled={actionBusy}
+                onClick={() => void handleAcceptance('accepted')}
+                className="h-10 px-6 bg-[#FD4E59] text-white text-[14px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2 disabled:opacity-50"
+              >
+                <Check className="w-4 h-4" />
+                Accept role
+              </button>
+            </>
+          )}
+        </div>
+      ) : null}
 
       {showSourceModal ? (
         <div
