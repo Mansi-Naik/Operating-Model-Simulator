@@ -1,5 +1,7 @@
-import { RefreshCw, Settings, ArrowRight, TrendingUp, Check, Sparkles, Info } from 'lucide-react';
+import { Settings, ArrowRight, TrendingUp, Check, Sparkles, Info } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PipelineReRunButton } from '../../PipelineReRunButton';
+import { isForceRerun, setForceRerunFlag } from '../../../../lib/pipelineCacheUtils';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { normalizeF3Roles } from '../../../../lib/f3RolesStorage';
 import { runFullEconomics } from '../../../../lib/economicsEngine';
@@ -219,6 +221,9 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
   const [assumptionsUsed, setAssumptionsUsed] = useState<Record<string, unknown>>({});
   const [saveError, setSaveError] = useState<string | null>(null);
   const [hasSavedEconomics, setHasSavedEconomics] = useState(false);
+  const [savedEconomicsSnapshot, setSavedEconomicsSnapshot] = useState<Record<string, unknown> | null>(
+    null,
+  );
   const [sensitivityNarrative, setSensitivityNarrative] = useState('Generating analysis...');
   const [narrativePending, setNarrativePending] = useState(false);
 
@@ -250,7 +255,13 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
     setF4Pods(parseF4Pods(data?.f4_pods));
     const savedEconomics = asObj(data?.f5_economics);
     setAssumptionsUsed(asObj(savedEconomics.assumptions_used));
-    setHasSavedEconomics(Boolean(savedEconomics.economics_result));
+    const hasSaved = Boolean(savedEconomics.economics_result);
+    setHasSavedEconomics(hasSaved);
+    if (hasSaved && !isForceRerun()) {
+      setSavedEconomicsSnapshot(asObj(savedEconomics.economics_result));
+    } else {
+      setSavedEconomicsSnapshot(null);
+    }
     setPipelineLoading(false);
   }, [engagementIdFromUrl, refreshKey]);
 
@@ -286,6 +297,13 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
       preferences,
     ) as Record<string, unknown>;
   }, [engagement, tasks, selectedVariant, f3Roles, preferences]);
+
+  const displayEconomics = useMemo(() => {
+    if (savedEconomicsSnapshot && hasSavedEconomics && !isForceRerun()) {
+      return savedEconomicsSnapshot;
+    }
+    return economicsResult;
+  }, [savedEconomicsSnapshot, hasSavedEconomics, economicsResult]);
 
   const economicsSignature = useMemo(
     () => (economicsResult ? JSON.stringify({ selectedVariantName, assumptionsUsed, economicsResult }) : ''),
@@ -367,13 +385,15 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
   const loading = engagementLoading || pipelineLoading;
   const error = engagementError ?? pipelineError;
 
-  const currentState = asObj(economicsResult?.current_state);
-  const futureState = asObj(economicsResult?.future_state);
-  const savings = asObj(economicsResult?.savings);
-  const curve = Array.isArray(economicsResult?.savings_curve) ? (economicsResult.savings_curve as Record<string, unknown>[]) : [];
-  const sensitivity = asObj(economicsResult?.sensitivity);
+  const currentState = asObj(displayEconomics?.current_state);
+  const futureState = asObj(displayEconomics?.future_state);
+  const savings = asObj(displayEconomics?.savings);
+  const curve = Array.isArray(displayEconomics?.savings_curve)
+    ? (displayEconomics.savings_curve as Record<string, unknown>[])
+    : [];
+  const sensitivity = asObj(displayEconomics?.sensitivity);
   const drivers = Array.isArray(sensitivity.drivers) ? (sensitivity.drivers as Record<string, unknown>[]) : [];
-  const paybackMonth = Math.floor(toNum(economicsResult?.payback_month));
+  const paybackMonth = Math.floor(toNum(displayEconomics?.payback_month));
 
   const monthlySavingsPct = toNum(savings.monthly_savings_pct);
   const monthlyCostDelta = toNum(futureState.monthly_cost_usd) - toNum(currentState.monthly_cost_usd);
@@ -398,22 +418,20 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
       <div className="p-10 max-w-[1204px] mx-auto">
         <div className="text-[13px] text-[#161916] mb-6">ECONOMICS</div>
         <div className="mb-6 text-[14px] text-[#FD4E59] border border-[#FD4E59]/30 rounded-lg p-4 bg-[#FCE4D6]/30">{error}</div>
-        <button
-          type="button"
-          onClick={() => {
+        <PipelineReRunButton
+          onConfirmRerun={() => {
+            setForceRerunFlag(true);
+            setSavedEconomicsSnapshot(null);
+            setHasSavedEconomics(false);
             if (engagementIdFromUrl) void loadEngagement(engagementIdFromUrl);
             void loadPipeline();
           }}
-          className="h-9 px-4 border border-[#494949]/30 text-[#494949] text-[13px] rounded-md hover:bg-[#494949]/5 flex items-center gap-2"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Re-run
-        </button>
+        />
       </div>
     );
   }
 
-  if (!economicsResult || !selectedVariant) {
+  if (!displayEconomics || !selectedVariant) {
     return (
       <div className="p-10 max-w-[1204px] mx-auto">
         <div className="text-[13px] text-[#161916] mb-6">ECONOMICS</div>
@@ -451,17 +469,15 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
         <div className="flex items-center justify-between mb-6">
           <div className="text-[13px] text-[#161916]">ECONOMICS</div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
+            <PipelineReRunButton
+              onConfirmRerun={() => {
+                setForceRerunFlag(true);
+                setSavedEconomicsSnapshot(null);
+                setHasSavedEconomics(false);
                 if (engagementIdFromUrl) void loadEngagement(engagementIdFromUrl);
                 void loadPipeline();
               }}
-              className="h-9 px-4 border border-[#494949]/30 text-[#494949] text-[13px] rounded-md hover:bg-[#494949]/5 flex items-center gap-2"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Re-run
-            </button>
+            />
             <button type="button" className="h-9 px-3 border border-[#494949]/30 text-[#494949] rounded-md hover:bg-[#494949]/5">
               <Settings className="w-4 h-4" />
             </button>

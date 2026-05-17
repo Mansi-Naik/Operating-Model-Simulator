@@ -1,4 +1,5 @@
 import { ChevronLeft, Calculator, Download, ArrowRight } from 'lucide-react';
+import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { computePodCount, readEngagementVolumePerDay } from '../../../../lib/podSizing';
@@ -10,6 +11,7 @@ interface F4_2_OrgRollupProps {
   onProceedToF5?: () => void;
   /** When F4 selection is missing or invalid — return user to F4.1 */
   onRedirectToVariants?: () => void;
+  onReRunToPreRun?: () => void;
 }
 
 function parseF4Pods(raw: unknown): Record<string, unknown> | null {
@@ -115,7 +117,7 @@ function F4OrgRollupPodsVisual({ podCount, agentsPerPod }: OrgPodsVisualProps) {
   );
 }
 
-export function F4_2_OrgRollup({ onBack, onShowMath, onProceedToF5, onRedirectToVariants }: F4_2_OrgRollupProps) {
+export function F4_2_OrgRollup({ onBack, onShowMath, onProceedToF5, onRedirectToVariants, onReRunToPreRun }: F4_2_OrgRollupProps) {
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
 
@@ -288,6 +290,7 @@ export function F4_2_OrgRollup({ onBack, onShowMath, onProceedToF5, onRedirectTo
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {onReRunToPreRun ? <PipelineReRunButton onConfirmRerun={onReRunToPreRun} /> : null}
           <button
             type="button"
             onClick={onShowMath}

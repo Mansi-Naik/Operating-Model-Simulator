@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
+import { PipelinePreRunGate } from '../PipelinePreRunGate';
+import { setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
 import { F2_0_PreRun } from './allocation/F2_0_PreRun';
 import { F2_1_Generation } from './allocation/F2_1_Generation';
 import { F2_2_MatrixView } from './allocation/F2_2_MatrixView';
 import { F2_3_TaskDrawer } from './allocation/F2_3_TaskDrawer';
-import { F2_5_BulkModal } from './allocation/F2_5_BulkModal';
 import { useEngagement } from '../../../hooks/useEngagement';
 import { getFinalAllocation } from '../../../lib/roleAggregation';
 
@@ -20,7 +21,6 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
   const { engagement, tasks, loadEngagement } = useEngagement(engagementIdFromUrl);
   const [currentScreen, setCurrentScreen] = useState<AllocationScreen>('pre-run');
   const [showTaskDrawer, setShowTaskDrawer] = useState(false);
-  const [showReRunModal, setShowReRunModal] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [generationInput, setGenerationInput] = useState<{
     engagementId: string | null;
@@ -52,6 +52,7 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
   }, [engagement?.intake_data]);
 
   const handleGenerate = (appetite: string) => {
+    setForceRerunFlag(false);
     const sourceTasks = Array.isArray(tasks) ? tasks : [];
     setGenerationInput({
       engagementId: engagementIdFromUrl,
@@ -70,28 +71,29 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
     setShowTaskDrawer(true);
   };
 
-  const handleReRun = () => {
-    setShowReRunModal(true);
-  };
-
-  const handleConfirmReRun = () => {
-    setShowReRunModal(false);
+  const handleReRunToPreRun = () => {
     setGenerationResult(null);
-    setCurrentScreen('generating');
+    setCurrentScreen('pre-run');
   };
 
   const renderScreen = () => {
     switch (currentScreen) {
       case 'pre-run':
         return (
-          <F2_0_PreRun
-            onGenerate={handleGenerate}
-            onBack={onBack}
-            taskCount={taskCount}
-            readinessScore={readinessScore}
-            readinessBand={readinessBand}
-            initialAutomationAppetite={automationAppetite}
-          />
+          <PipelinePreRunGate
+            feature="f2"
+            engagementId={engagementIdFromUrl}
+            onSkipToResults={() => setCurrentScreen('matrix-view')}
+          >
+            <F2_0_PreRun
+              onGenerate={handleGenerate}
+              onBack={onBack}
+              taskCount={taskCount}
+              readinessScore={readinessScore}
+              readinessBand={readinessBand}
+              initialAutomationAppetite={automationAppetite}
+            />
+          </PipelinePreRunGate>
         );
       case 'generating':
         return (
@@ -100,6 +102,7 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
             onBack={() => setCurrentScreen('pre-run')}
             engagementId={generationInput.engagementId}
             onComplete={async (result) => {
+              setForceRerunFlag(false);
               setGenerationResult(result);
               let loadedTasks: Record<string, unknown>[] = [];
               if (generationInput.engagementId) {
@@ -122,7 +125,7 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
           <>
             <F2_2_MatrixView
               onTaskClick={handleTaskClick}
-              onReRun={handleReRun}
+              onReRun={handleReRunToPreRun}
               onBack={() => setCurrentScreen('pre-run')}
               onProceedToF3={onProceedToF3}
               generationResult={generationResult}
@@ -151,12 +154,6 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
             }
             // Engagement F3–F7 refresh flag: set via engagements.status or stale marker (follow-up).
           }}
-        />
-      )}
-      {showReRunModal && (
-        <F2_5_BulkModal
-          onClose={() => setShowReRunModal(false)}
-          onReRun={handleConfirmReRun}
         />
       )}
     </>

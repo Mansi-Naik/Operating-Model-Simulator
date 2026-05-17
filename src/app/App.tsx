@@ -81,6 +81,7 @@ export default function App() {
   const handleClientSwitch = (engagementId: string) => {
     const url = new URL(window.location.href);
     url.searchParams.set('engagementId', engagementId);
+    url.searchParams.delete('forceRerun');
     window.history.pushState({}, '', url.toString());
     setActiveEngagementId(engagementId);
     setCurrentFeature('f1');
@@ -226,6 +227,7 @@ export default function App() {
             }}
             initialScreen={podStartScreen}
             f4Message={podMessage}
+            engagementId={activeEngagementId}
           />
         );
       case 'economics':
@@ -258,6 +260,7 @@ export default function App() {
               setTimelineStartScreen(undefined);
               handleProceedToF7();
             }}
+            engagementId={activeEngagementId}
           />
         );
       case 'summary':
@@ -288,7 +291,11 @@ export default function App() {
       <Header activeEngagementId={activeEngagementId} onSelectEngagement={handleClientSwitch} />
 
       <div className="flex-1 flex overflow-hidden">
-        <NavigationRail currentFeature={currentFeature} onFeatureClick={handleFeatureClick} />
+        <NavigationRail
+          currentFeature={currentFeature}
+          onFeatureClick={handleFeatureClick}
+          engagementId={activeEngagementId}
+        />
 
         <main className="flex-1 overflow-auto bg-white">
           {renderScreen()}

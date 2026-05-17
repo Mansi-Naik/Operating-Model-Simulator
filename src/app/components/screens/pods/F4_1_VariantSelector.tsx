@@ -1,4 +1,5 @@
-import { RefreshCw, Settings, Star, Check, ArrowRight, Calculator } from 'lucide-react';
+import { Settings, Star, Check, ArrowRight, Calculator } from 'lucide-react';
+import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import {
@@ -17,6 +18,7 @@ interface F4_1_VariantSelectorProps {
   onViewOrgRollup: () => void;
   onShowMath: () => void;
   message?: string | null;
+  onReRunToPreRun?: () => void;
 }
 
 function variantKeyToRiskChip(key: string): RiskChip {
@@ -119,7 +121,7 @@ async function persistF4PodsSelection(
   return { ok: true };
 }
 
-export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, message }: F4_1_VariantSelectorProps) {
+export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, message, onReRunToPreRun }: F4_1_VariantSelectorProps) {
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
 
@@ -257,10 +259,6 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, message }: F
     setTargetSpan(span.recommended);
   };
 
-  const handleReRun = useCallback(() => {
-    if (engagementIdFromUrl) void loadEngagement(engagementIdFromUrl);
-  }, [engagementIdFromUrl, loadEngagement]);
-
   const getRiskChip = (risk: string) => {
     const configs = {
       LOW: { bg: '#E2EFDA', text: '#548235' },
@@ -334,14 +332,7 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, message }: F
       <div className="flex items-center justify-between mb-6">
         <div className="text-[13px] text-[#161916]">PODS</div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleReRun}
-            className="h-9 px-4 border border-[#494949]/30 text-[#494949] text-[13px] rounded-md hover:bg-[#494949]/5 flex items-center gap-2"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Re-run
-          </button>
+          {onReRunToPreRun ? <PipelineReRunButton onConfirmRerun={onReRunToPreRun} /> : null}
           <button
             type="button"
             className="h-9 px-3 border border-[#494949]/30 text-[#494949] rounded-md hover:bg-[#494949]/5"

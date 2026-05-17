@@ -1,4 +1,5 @@
-import { RefreshCw, Settings, ChevronDown, ArrowRight, Sparkles, ArrowLeft } from 'lucide-react';
+import { Settings, ChevronDown, ArrowRight, Sparkles, ArrowLeft } from 'lucide-react';
+import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { updateF3RoleAcceptance } from '../../../../lib/f3AcceptanceClient';
@@ -308,13 +309,7 @@ export function F3_1_RolesGrid({
       <div className="flex items-center justify-between mb-4">
         <div className="text-[13px] text-[#161916]">ROLES</div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={onReRun}
-            className="h-9 px-4 border border-[#494949]/30 text-[#494949] text-[13px] rounded-md hover:bg-[#494949]/5 flex items-center gap-2"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Re-run
-          </button>
+          <PipelineReRunButton onConfirmRerun={onReRun} />
           <button className="h-9 px-3 border border-[#494949]/30 text-[#494949] rounded-md hover:bg-[#494949]/5">
             <Settings className="w-4 h-4" />
           </button>

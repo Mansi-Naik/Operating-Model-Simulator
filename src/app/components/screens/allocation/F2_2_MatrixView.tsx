@@ -1,6 +1,8 @@
-import { RefreshCw, Settings, ChevronDown, Lock, Sparkles, Edit2, AlertTriangle, ArrowLeft } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Settings, ChevronDown, Lock, Sparkles, Edit2, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useEngagement } from '../../../../hooks/useEngagement';
+import { usePipelineRuns } from '../../../../hooks/usePipelineRuns';
 import { generateAdvisories } from '../../../../lib/advisoryGeneration';
 import { F2_4_Advisories } from './F2_4_Advisories';
 
@@ -49,7 +51,16 @@ export function F2_2_MatrixView({
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
   const activeEngagementId = engagementId ?? engagementIdFromUrl;
-  const { engagement, tasks: dbTasks } = useEngagement(activeEngagementId);
+  const { engagement, tasks: dbTasks, loadEngagement } = useEngagement(activeEngagementId);
+  const { f2_data, isLoading: pipelineLoading } = usePipelineRuns(activeEngagementId);
+
+  useEffect(() => {
+    if (pipelineLoading || !activeEngagementId) return;
+    const hasLocalTasks = Array.isArray(dbTasks) && dbTasks.length > 0;
+    if (!hasLocalTasks && f2_data?.tasks?.length) {
+      void loadEngagement(activeEngagementId);
+    }
+  }, [pipelineLoading, activeEngagementId, dbTasks, f2_data, loadEngagement]);
   const automationAppetite = useMemo(() => {
     const intake = engagement?.intake_data;
     const pref =
@@ -226,13 +237,7 @@ export function F2_2_MatrixView({
       <div className="flex items-center justify-between mb-4">
         <div className="text-[13px] text-[#161916]">ALLOCATION MATRIX</div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={onReRun}
-            className="h-9 px-4 border border-[#494949]/30 text-[#494949] text-[13px] rounded-md hover:bg-[#494949]/5 flex items-center gap-2"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Re-run
-          </button>
+          <PipelineReRunButton onConfirmRerun={onReRun} />
           <button className="h-9 px-3 border border-[#494949]/30 text-[#494949] rounded-md hover:bg-[#494949]/5">
             <Settings className="w-4 h-4" />
           </button>

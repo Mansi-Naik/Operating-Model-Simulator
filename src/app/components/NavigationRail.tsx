@@ -1,4 +1,5 @@
-import { Lock, Check, Circle, RefreshCw } from 'lucide-react';
+import { Lock, Check, Circle } from 'lucide-react';
+import { usePipelineRuns } from '../../hooks/usePipelineRuns';
 
 type FeatureStatus = 'not-started' | 'in-progress' | 'complete' | 'stale';
 
@@ -8,62 +9,125 @@ interface Feature {
   name: string;
   status: FeatureStatus;
   locked: boolean;
+  savedComplete: boolean;
 }
 
 interface NavigationRailProps {
   currentFeature: string;
   onFeatureClick: (featureId: string) => void;
+  engagementId?: string | null;
 }
 
-export function NavigationRail({ currentFeature, onFeatureClick }: NavigationRailProps) {
-  const currentFeatureNum = parseInt(currentFeature.replace('f', ''));
+export function NavigationRail({ currentFeature, onFeatureClick, engagementId }: NavigationRailProps) {
+  const currentFeatureNum = parseInt(currentFeature.replace('f', ''), 10);
+  const pipeline = usePipelineRuns(engagementId ?? null);
 
   const getFeatureStatus = (featureNum: number): FeatureStatus => {
     if (featureNum < currentFeatureNum) {
       return 'complete';
-    } else if (featureNum === currentFeatureNum) {
+    }
+    if (featureNum === currentFeatureNum) {
       return 'in-progress';
-    } else if (featureNum === currentFeatureNum + 1) {
+    }
+    if (featureNum === currentFeatureNum + 1) {
       return 'in-progress';
-    } else {
-      return 'not-started';
+    }
+    return 'not-started';
+  };
+
+  const savedForFeature = (id: string): boolean => {
+    if (id === 'f1') return Boolean(engagementId);
+    if (pipeline.isLoading) return false;
+    switch (id) {
+      case 'f2':
+        return pipeline.f2_exists;
+      case 'f3':
+        return pipeline.f3_exists;
+      case 'f4':
+        return pipeline.f4_exists;
+      case 'f5':
+        return pipeline.f5_exists;
+      case 'f6':
+        return pipeline.f6_exists;
+      case 'f7':
+        return false;
+      default:
+        return false;
     }
   };
 
   const features: Feature[] = [
-    { id: 'f1', number: 'F1', name: 'Intake', status: getFeatureStatus(1), locked: false },
-    { id: 'f2', number: 'F2', name: 'Allocation', status: getFeatureStatus(2), locked: currentFeatureNum < 2 },
-    { id: 'f3', number: 'F3', name: 'Roles', status: getFeatureStatus(3), locked: currentFeatureNum < 3 },
-    { id: 'f4', number: 'F4', name: 'Pods', status: getFeatureStatus(4), locked: currentFeatureNum < 4 },
-    { id: 'f5', number: 'F5', name: 'Economics', status: getFeatureStatus(5), locked: currentFeatureNum < 5 },
-    { id: 'f6', number: 'F6', name: 'Timeline', status: getFeatureStatus(6), locked: currentFeatureNum < 6 },
-    { id: 'f7', number: 'F7', name: 'Summary', status: getFeatureStatus(7), locked: currentFeatureNum < 7 },
+    {
+      id: 'f1',
+      number: 'F1',
+      name: 'Intake',
+      status: getFeatureStatus(1),
+      locked: false,
+      savedComplete: savedForFeature('f1'),
+    },
+    {
+      id: 'f2',
+      number: 'F2',
+      name: 'Allocation',
+      status: getFeatureStatus(2),
+      locked: currentFeatureNum < 2,
+      savedComplete: savedForFeature('f2'),
+    },
+    {
+      id: 'f3',
+      number: 'F3',
+      name: 'Roles',
+      status: getFeatureStatus(3),
+      locked: currentFeatureNum < 3,
+      savedComplete: savedForFeature('f3'),
+    },
+    {
+      id: 'f4',
+      number: 'F4',
+      name: 'Pods',
+      status: getFeatureStatus(4),
+      locked: currentFeatureNum < 4,
+      savedComplete: savedForFeature('f4'),
+    },
+    {
+      id: 'f5',
+      number: 'F5',
+      name: 'Economics',
+      status: getFeatureStatus(5),
+      locked: currentFeatureNum < 5,
+      savedComplete: savedForFeature('f5'),
+    },
+    {
+      id: 'f6',
+      number: 'F6',
+      name: 'Timeline',
+      status: getFeatureStatus(6),
+      locked: currentFeatureNum < 6,
+      savedComplete: savedForFeature('f6'),
+    },
+    {
+      id: 'f7',
+      number: 'F7',
+      name: 'Summary',
+      status: getFeatureStatus(7),
+      locked: currentFeatureNum < 7,
+      savedComplete: savedForFeature('f7'),
+    },
   ];
 
   const getPreviousFeatureName = (currentNumber: string) => {
-    const featureIndex = parseInt(currentNumber.replace('F', '')) - 1;
+    const featureIndex = parseInt(currentNumber.replace('F', ''), 10) - 1;
     if (featureIndex > 0) {
       return features[featureIndex - 1].name;
     }
     return 'previous step';
   };
 
-  const getStatusIcon = (status: FeatureStatus) => {
-    switch (status) {
-      case 'complete':
-        return <Check className="w-4 h-4 text-[#FD4E59]" />;
-      case 'in-progress':
-        return <div className="w-2 h-2 rounded-full bg-[#FFAB28]" />;
-      case 'stale':
-        return (
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 rounded-full bg-[#FFAB28]" />
-            <RefreshCw className="w-3 h-3 text-[#FFAB28]" />
-          </div>
-        );
-      default:
-        return <Circle className="w-4 h-4 text-[#6D7069]" strokeWidth={1.5} />;
+  const getSavedStatusIcon = (savedComplete: boolean) => {
+    if (savedComplete) {
+      return <Check className="w-4 h-4 text-[#4CAF50]" strokeWidth={2.5} />;
     }
+    return <Circle className="w-3.5 h-3.5 text-[#6D7069]" strokeWidth={1.5} />;
   };
 
   return (
@@ -92,8 +156,8 @@ export function NavigationRail({ currentFeature, onFeatureClick }: NavigationRai
                     ${isActive
                       ? 'bg-[#FD4E59] text-white'
                       : feature.locked
-                      ? 'border border-dashed border-[#6D7069] text-[#6D7069]'
-                      : 'border border-[#161916]/20 text-[#161916]'
+                        ? 'border border-dashed border-[#6D7069] text-[#6D7069]'
+                        : 'border border-[#161916]/20 text-[#161916]'
                     }
                   `}
                 >
@@ -112,27 +176,18 @@ export function NavigationRail({ currentFeature, onFeatureClick }: NavigationRai
                 {feature.locked ? (
                   <Lock className="w-3 h-3 text-[#6D7069]" />
                 ) : (
-                  getStatusIcon(feature.status)
+                  getSavedStatusIcon(feature.savedComplete)
                 )}
               </div>
 
               {feature.locked && (
                 <div className="hidden group-hover:block absolute left-full ml-2 z-10 px-3 py-2 bg-white text-[#161916] text-[12px] rounded shadow-lg whitespace-nowrap border border-[#161916]/10">
-                  Complete {getPreviousFeatureName(feature.number)} to unlock {feature.name}
+                  Complete {getPreviousFeatureName(feature.number)} first
                 </div>
               )}
             </button>
           );
         })}
-      </div>
-
-      <div className="p-4 flex flex-col gap-2">
-        <button className="w-full h-9 border border-[#161916] text-[#161916] text-[13px] font-medium rounded hover:bg-[#161916]/5">
-          Save
-        </button>
-        <button className="w-full h-9 bg-[#FFAB28] text-[#161916] text-[13px] font-semibold rounded hover:bg-[#FFAB28]/90">
-          Export
-        </button>
       </div>
     </nav>
   );

@@ -1,4 +1,5 @@
 import { ArrowRight, ChevronLeft, GitBranch, Info, Sparkles } from 'lucide-react';
+import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../../../supabaseClient';
 import { F6_4_PhaseDetailDrawer } from './F6_4_PhaseDetailDrawer';
@@ -9,6 +10,7 @@ interface F6_1_C_GanttViewProps {
   onProceedToF7?: () => void;
   onMissingTimeline?: () => void;
   onGoToF3?: () => void;
+  onReRunToPreRun?: () => void;
 }
 
 type TimelineNode = Record<string, unknown>;
@@ -126,6 +128,7 @@ export function F6_1_C_GanttView({
   onProceedToF7,
   onMissingTimeline,
   onGoToF3,
+  onReRunToPreRun,
 }: F6_1_C_GanttViewProps) {
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
@@ -257,14 +260,17 @@ export function F6_1_C_GanttView({
           <ChevronLeft className="w-4 h-4" />
           Back to timeline
         </button>
-        <button
-          type="button"
-          onClick={() => setShowCriticalPath((value) => !value)}
-          className="h-9 px-4 border border-[#494949]/30 text-[#494949] text-[13px] rounded-md hover:bg-[#494949]/5 flex items-center gap-2"
-        >
-          <GitBranch className="w-4 h-4" />
-          {showCriticalPath ? 'Hide critical path' : 'Show critical path'}
-        </button>
+        <div className="flex items-center gap-2">
+          {onReRunToPreRun ? <PipelineReRunButton onConfirmRerun={onReRunToPreRun} /> : null}
+          <button
+            type="button"
+            onClick={() => setShowCriticalPath((value) => !value)}
+            className="h-9 px-4 border border-[#494949]/30 text-[#494949] text-[13px] rounded-md hover:bg-[#494949]/5 flex items-center gap-2"
+          >
+            <GitBranch className="w-4 h-4" />
+            {showCriticalPath ? 'Hide critical path' : 'Show critical path'}
+          </button>
+        </div>
       </div>
 
       <div className="mb-6">

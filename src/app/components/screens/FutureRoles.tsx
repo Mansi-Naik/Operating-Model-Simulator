@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useEngagement } from '../../../hooks/useEngagement';
+import { PipelinePreRunGate } from '../PipelinePreRunGate';
+import { setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
 import { computeF3PreRunPreview } from '../../../lib/f3PreRunPreview';
 import { F3_0_PreRun } from './roles/F3_0_PreRun';
 import { F3_1_Generation } from './roles/F3_1_Generation';
@@ -37,10 +39,12 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2 }: FutureRolesProp
   );
 
   const handleGenerate = useCallback(() => {
+    setForceRerunFlag(false);
     setCurrentScreen('generating');
   }, []);
 
   const handleGenerationComplete = useCallback(() => {
+    setForceRerunFlag(false);
     if (engagementIdFromUrl) {
       void loadEngagement(engagementIdFromUrl);
     }
@@ -62,7 +66,7 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2 }: FutureRolesProp
     setCurrentScreen('emergent-role-detail');
   };
 
-  const handleReRun = () => {
+  const handleReRunToPreRun = () => {
     setCurrentScreen('pre-run');
   };
 
@@ -79,17 +83,23 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2 }: FutureRolesProp
     switch (currentScreen) {
       case 'pre-run':
         return (
-          <F3_0_PreRun
-            onGenerate={handleGenerate}
-            onBack={onBack}
-            onGoToF2={onGoToF2}
-            loading={loading}
-            error={error}
-            needsF2Banner={!preview.hasF2Predictions}
-            patternSummary={preview.patternSummary}
-            previewRows={preview.previewRows}
-            emergentHint={preview.emergentHint}
-          />
+          <PipelinePreRunGate
+            feature="f3"
+            engagementId={engagementIdFromUrl}
+            onSkipToResults={() => setCurrentScreen('roles-grid')}
+          >
+            <F3_0_PreRun
+              onGenerate={handleGenerate}
+              onBack={onBack}
+              onGoToF2={onGoToF2}
+              loading={loading}
+              error={error}
+              needsF2Banner={!preview.hasF2Predictions}
+              patternSummary={preview.patternSummary}
+              previewRows={preview.previewRows}
+              emergentHint={preview.emergentHint}
+            />
+          </PipelinePreRunGate>
         );
       case 'generating':
         return (
@@ -106,7 +116,7 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2 }: FutureRolesProp
             engagementId={engagementIdFromUrl}
             onRoleClick={handleRoleClick}
             onEmergentRoleClick={handleEmergentRoleClick}
-            onReRun={handleReRun}
+            onReRun={handleReRunToPreRun}
             onBack={() => setCurrentScreen('pre-run')}
             onProceedToF4={onProceedToF4}
           />

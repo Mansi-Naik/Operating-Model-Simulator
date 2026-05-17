@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { PipelinePreRunGate } from '../PipelinePreRunGate';
+import { setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
 import { F6_0_PreRun } from './timeline/F6_0_PreRun';
 import { F6_1_ImplementationTimeline } from './timeline/F6_1_ImplementationTimeline';
 import { F6_1_B_DependenciesView } from './timeline/F6_1_B_DependenciesView';
@@ -15,9 +17,14 @@ interface TimelineProps {
   onGoToF3?: () => void;
   /** When set (e.g. returning from F7), opens this sub-screen once. */
   initialScreen?: TimelineScreen;
+  engagementId?: string | null;
 }
 
-export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3, initialScreen }: TimelineProps) {
+export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3, initialScreen, engagementId }: TimelineProps) {
+  const engagementIdFromUrl =
+    typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
+  const activeEngagementId = engagementId ?? engagementIdFromUrl;
+
   const [currentScreen, setCurrentScreen] = useState<TimelineScreen>(initialScreen ?? 'pre-run');
 
   useEffect(() => {
@@ -28,16 +35,28 @@ export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3, initialScr
     switch (currentScreen) {
       case 'pre-run':
         return (
-          <F6_0_PreRun
-            onGenerateTimeline={() => setCurrentScreen('loading')}
-            onBack={onBack}
-            onGoToF5={onGoToF5}
-          />
+          <PipelinePreRunGate
+            feature="f6"
+            engagementId={activeEngagementId}
+            onSkipToResults={() => setCurrentScreen('gantt')}
+          >
+            <F6_0_PreRun
+              onGenerateTimeline={() => {
+                setForceRerunFlag(false);
+                setCurrentScreen('loading');
+              }}
+              onBack={onBack}
+              onGoToF5={onGoToF5}
+            />
+          </PipelinePreRunGate>
         );
       case 'loading':
         return (
           <F6_1_TimelineGeneration
-            onComplete={() => setCurrentScreen('gantt')}
+            onComplete={() => {
+              setForceRerunFlag(false);
+              setCurrentScreen('gantt');
+            }}
             onCancel={() => setCurrentScreen('pre-run')}
             onBack={() => setCurrentScreen('pre-run')}
           />
@@ -58,6 +77,7 @@ export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3, initialScr
             onProceedToF7={onProceedToF7}
             onMissingTimeline={() => setCurrentScreen('pre-run')}
             onGoToF3={onGoToF3}
+            onReRunToPreRun={() => setCurrentScreen('pre-run')}
           />
         );
       case 'dependencies':

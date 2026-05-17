@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { PipelinePreRunGate } from '../PipelinePreRunGate';
 import { F4_0_PreRun } from './pods/F4_0_PreRun';
 import { F4_1_VariantSelector } from './pods/F4_1_VariantSelector';
 import { F4_2_OrgRollup } from './pods/F4_2_OrgRollup';
@@ -12,21 +13,41 @@ interface PodStructureProps {
   onGoToF3?: () => void;
   initialScreen?: PodScreen;
   f4Message?: string | null;
+  engagementId?: string | null;
 }
 
-export function PodStructure({ onBack, onProceedToF5, onGoToF3, initialScreen = 'pre-run', f4Message }: PodStructureProps) {
+export function PodStructure({
+  onBack,
+  onProceedToF5,
+  onGoToF3,
+  initialScreen = 'pre-run',
+  f4Message,
+  engagementId,
+}: PodStructureProps) {
+  const engagementIdFromUrl =
+    typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
+  const activeEngagementId = engagementId ?? engagementIdFromUrl;
+
   const [currentScreen, setCurrentScreen] = useState<PodScreen>(initialScreen);
   const [showMathDrawer, setShowMathDrawer] = useState(false);
+
+  const handleReRunToPreRun = () => setCurrentScreen('pre-run');
 
   const renderScreen = () => {
     switch (currentScreen) {
       case 'pre-run':
         return (
-          <F4_0_PreRun
-            onGeneratePodVariants={() => setCurrentScreen('variant-selector')}
-            onBack={onBack}
-            onGoToF3={onGoToF3}
-          />
+          <PipelinePreRunGate
+            feature="f4"
+            engagementId={activeEngagementId}
+            onSkipToResults={() => setCurrentScreen('org-rollup')}
+          >
+            <F4_0_PreRun
+              onGeneratePodVariants={() => setCurrentScreen('variant-selector')}
+              onBack={onBack}
+              onGoToF3={onGoToF3}
+            />
+          </PipelinePreRunGate>
         );
       case 'variant-selector':
         return (
@@ -34,6 +55,7 @@ export function PodStructure({ onBack, onProceedToF5, onGoToF3, initialScreen = 
             onViewOrgRollup={() => setCurrentScreen('org-rollup')}
             onShowMath={() => setShowMathDrawer(true)}
             message={f4Message}
+            onReRunToPreRun={handleReRunToPreRun}
           />
         );
       case 'org-rollup':
@@ -43,6 +65,7 @@ export function PodStructure({ onBack, onProceedToF5, onGoToF3, initialScreen = 
             onShowMath={() => setShowMathDrawer(true)}
             onProceedToF5={onProceedToF5}
             onRedirectToVariants={() => setCurrentScreen('variant-selector')}
+            onReRunToPreRun={handleReRunToPreRun}
           />
         );
     }
