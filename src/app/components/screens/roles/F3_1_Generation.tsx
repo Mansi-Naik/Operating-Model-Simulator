@@ -1,6 +1,8 @@
 import { Check, Circle, Loader2, ArrowLeft } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEngagement } from '../../../../hooks/useEngagement';
+import { usePipelineCacheEntry } from '../../../../hooks/usePipelineCacheEntry';
+import { isForceRerun } from '../../../../lib/pipelineCacheUtils';
 import { aggregateByRole } from '../../../../lib/roleAggregation';
 
 interface F3_1_GenerationProps {
@@ -33,6 +35,7 @@ export function F3_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
   const activeEngagementId = engagementId ?? engagementIdFromUrl;
   const { loadEngagement } = useEngagement(activeEngagementId);
+  const { hasCachedResults, isLoading: pipelineLoading } = usePipelineCacheEntry('f3', activeEngagementId);
   const cancelRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -115,11 +118,18 @@ export function F3_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
   );
 
   useEffect(() => {
+    if (pipelineLoading) return;
+
     cancelRef.current = false;
     const run = async () => {
       if (!activeEngagementId) {
         console.error('[F3.1] Missing engagement id');
         onCancel();
+        return;
+      }
+
+      if (!isForceRerun() && hasCachedResults) {
+        await onComplete?.({ failedRoles: [], roleNames: [] });
         return;
       }
 
@@ -226,7 +236,7 @@ export function F3_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
       cancelRef.current = true;
       abortRef.current?.abort();
     };
-  }, [activeEngagementId, loadEngagement, onCancel, onComplete]);
+  }, [activeEngagementId, loadEngagement, onCancel, onComplete, pipelineLoading, hasCachedResults]);
 
   const handleCancel = () => {
     cancelRef.current = true;

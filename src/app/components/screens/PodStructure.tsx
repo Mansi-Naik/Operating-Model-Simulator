@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import { PipelinePreRunGate } from '../PipelinePreRunGate';
+import { useCallback, useState } from 'react';
+import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
+import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
+import { isForceRerun } from '../../../lib/pipelineCacheUtils';
 import { F4_0_PreRun } from './pods/F4_0_PreRun';
 import { F4_1_VariantSelector } from './pods/F4_1_VariantSelector';
 import { F4_2_OrgRollup } from './pods/F4_2_OrgRollup';
@@ -27,11 +29,24 @@ export function PodStructure({
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
   const activeEngagementId = engagementId ?? engagementIdFromUrl;
+  const { hasCachedResults, isLoading: pipelineLoading } = usePipelineCacheEntry('f4', activeEngagementId);
 
   const [currentScreen, setCurrentScreen] = useState<PodScreen>(initialScreen);
   const [showMathDrawer, setShowMathDrawer] = useState(false);
+  const goToOrgRollup = useCallback(() => setCurrentScreen('org-rollup'), []);
+  useMountPipelineCacheRedirect('f4', activeEngagementId, goToOrgRollup, {
+    enabled: initialScreen === 'pre-run',
+  });
 
   const handleReRunToPreRun = () => setCurrentScreen('pre-run');
+
+  const handleGeneratePodVariants = () => {
+    if (!isForceRerun() && hasCachedResults) {
+      setCurrentScreen('org-rollup');
+      return;
+    }
+    setCurrentScreen('variant-selector');
+  };
 
   const renderScreen = () => {
     switch (currentScreen) {
@@ -43,7 +58,7 @@ export function PodStructure({
             onSkipToResults={() => setCurrentScreen('org-rollup')}
           >
             <F4_0_PreRun
-              onGeneratePodVariants={() => setCurrentScreen('variant-selector')}
+              onGeneratePodVariants={handleGeneratePodVariants}
               onBack={onBack}
               onGoToF3={onGoToF3}
             />
@@ -70,6 +85,10 @@ export function PodStructure({
         );
     }
   };
+
+  if (!isForceRerun() && pipelineLoading && currentScreen === 'pre-run') {
+    return <PipelineCacheLoading />;
+  }
 
   return (
     <div className="relative">

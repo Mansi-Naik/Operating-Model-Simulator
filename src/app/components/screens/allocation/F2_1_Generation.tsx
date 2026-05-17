@@ -1,6 +1,7 @@
 import { Check, Circle, Loader2, ArrowLeft } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEngagement } from '../../../../hooks/useEngagement';
+import { isForceRerun, tasksFullyAllocated } from '../../../../lib/pipelineCacheUtils';
 
 interface F2_1_GenerationProps {
   onCancel: () => void;
@@ -79,6 +80,19 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
       if (!rows || rows.length === 0) {
         console.warn('[F2.1] No tasks to process. Aborting loop.');
         setGenerationError('No tasks found for this engagement. Add tasks in intake before generating the matrix.');
+        return;
+      }
+
+      if (!isForceRerun() && tasksFullyAllocated(rows)) {
+        const allIds = rows
+          .map((task) => (typeof task?.id === 'string' ? task.id : null))
+          .filter((id): id is string => Boolean(id));
+        setCompletedTasks(rows.length);
+        setConstraintsDone(true);
+        setCapabilitiesDone(true);
+        setCalibrationDone(true);
+        setValidationDone(true);
+        await onComplete?.({ processedTaskIds: allIds, failedTaskIds: [], total: rows.length });
         return;
       }
 

@@ -29,15 +29,22 @@ export function setForceRerunFlag(enabled) {
   window.history.replaceState({}, '', url.toString())
 }
 
+import { getFinalAllocation } from './roleAggregation.js'
+
 /**
  * @param {Record<string, unknown>[]} tasks
  * @returns {boolean}
  */
 export function tasksHaveF2Allocations(tasks) {
   if (!Array.isArray(tasks) || tasks.length === 0) return false
-  return tasks.some((t) => {
-    if (!t || typeof t !== 'object') return false
-    const ai = t.ai_allocation
-    return ai != null && String(ai).trim().length > 0
-  })
+  return tasks.some((t) => getFinalAllocation(t).length > 0)
+}
+
+/**
+ * @param {Record<string, unknown>[]} tasks
+ * @returns {boolean}
+ */
+export function tasksFullyAllocated(tasks) {
+  if (!Array.isArray(tasks) || tasks.length === 0) return false
+  return tasks.every((t) => getFinalAllocation(t).length > 0)
 }

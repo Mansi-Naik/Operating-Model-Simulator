@@ -197,6 +197,8 @@ export default function App() {
       case 'allocation-matrix':
         return (
           <AllocationMatrix
+            key={`f2-${activeEngagementId ?? 'none'}`}
+            engagementId={activeEngagementId}
             onBack={() => setCurrentScreen('readiness-review')}
             onProceedToF3={() => {
               setCurrentFeature('f3');
@@ -207,6 +209,8 @@ export default function App() {
       case 'future-roles':
         return (
           <FutureRoles
+            key={`f3-${activeEngagementId ?? 'none'}`}
+            engagementId={activeEngagementId}
             onBack={() => setCurrentScreen('allocation-matrix')}
             onProceedToF4={handleProceedToF4}
             onGoToF2={() => {
@@ -218,7 +222,7 @@ export default function App() {
       case 'pod-structure':
         return (
           <PodStructure
-            key={`${podStartScreen}-${podMessage ?? ''}`}
+            key={`f4-${activeEngagementId ?? 'none'}-${podStartScreen}-${podMessage ?? ''}`}
             onBack={() => setCurrentScreen('future-roles')}
             onProceedToF5={handleProceedToF5}
             onGoToF3={() => {
@@ -241,7 +245,7 @@ export default function App() {
       case 'timeline':
         return (
           <Timeline
-            key={timelineStartScreen ?? 'timeline-default'}
+            key={`f6-${activeEngagementId ?? 'none'}-${timelineStartScreen ?? 'timeline-default'}`}
             initialScreen={timelineStartScreen}
             onBack={() => {
               setTimelineStartScreen(undefined);

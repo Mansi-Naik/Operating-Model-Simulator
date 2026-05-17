@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
-import { PipelinePreRunGate } from '../PipelinePreRunGate';
-import { setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
+import { useCallback, useMemo, useState } from 'react';
+import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
+import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
+import { isForceRerun, setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
 import { F2_0_PreRun } from './allocation/F2_0_PreRun';
 import { F2_1_Generation } from './allocation/F2_1_Generation';
 import { F2_2_MatrixView } from './allocation/F2_2_MatrixView';
@@ -13,20 +14,25 @@ type AllocationScreen = 'pre-run' | 'generating' | 'matrix-view';
 interface AllocationMatrixProps {
   onBack?: () => void;
   onProceedToF3?: () => void;
+  engagementId?: string | null;
 }
 
-export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProps) {
+export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engagementIdProp }: AllocationMatrixProps) {
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
-  const { engagement, tasks, loadEngagement } = useEngagement(engagementIdFromUrl);
+  const activeEngagementId = engagementIdProp ?? engagementIdFromUrl;
+  const { engagement, tasks, loadEngagement } = useEngagement(activeEngagementId);
+  const { hasCachedResults, isLoading: pipelineLoading } = usePipelineCacheEntry('f2', activeEngagementId);
   const [currentScreen, setCurrentScreen] = useState<AllocationScreen>('pre-run');
+  const goToMatrixView = useCallback(() => setCurrentScreen('matrix-view'), []);
+  useMountPipelineCacheRedirect('f2', activeEngagementId, goToMatrixView);
   const [showTaskDrawer, setShowTaskDrawer] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [generationInput, setGenerationInput] = useState<{
     engagementId: string | null;
     tasks: any[];
   }>({
-    engagementId: engagementIdFromUrl,
+    engagementId: activeEngagementId,
     tasks: [],
   });
   const [generationResult, setGenerationResult] = useState<{
@@ -36,7 +42,7 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
   } | null>(null);
 
   const taskCount = (tasks ?? []).length;
-  const activeEngagementId = generationInput.engagementId ?? engagementIdFromUrl;
+  const drawerEngagementId = generationInput.engagementId ?? activeEngagementId;
   const readinessScore =
     typeof engagement?.readiness_score === 'number' ? engagement.readiness_score : null;
   const readinessBand =
@@ -52,10 +58,14 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
   }, [engagement?.intake_data]);
 
   const handleGenerate = (appetite: string) => {
+    if (!isForceRerun() && hasCachedResults) {
+      setCurrentScreen('matrix-view');
+      return;
+    }
     setForceRerunFlag(false);
     const sourceTasks = Array.isArray(tasks) ? tasks : [];
     setGenerationInput({
-      engagementId: engagementIdFromUrl,
+      engagementId: activeEngagementId,
       tasks: sourceTasks,
     });
     setGenerationResult(null);
@@ -82,8 +92,8 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
         return (
           <PipelinePreRunGate
             feature="f2"
-            engagementId={engagementIdFromUrl}
-            onSkipToResults={() => setCurrentScreen('matrix-view')}
+            engagementId={activeEngagementId}
+            onSkipToResults={goToMatrixView}
           >
             <F2_0_PreRun
               onGenerate={handleGenerate}
@@ -129,12 +139,20 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
               onBack={() => setCurrentScreen('pre-run')}
               onProceedToF3={onProceedToF3}
               generationResult={generationResult}
-              engagementId={generationInput.engagementId}
+              engagementId={generationInput.engagementId ?? activeEngagementId}
             />
           </>
         );
     }
   };
+
+  if (
+    !isForceRerun() &&
+    pipelineLoading &&
+    (currentScreen === 'pre-run' || currentScreen === 'generating')
+  ) {
+    return <PipelineCacheLoading />;
+  }
 
   return (
     <>
@@ -142,15 +160,15 @@ export function AllocationMatrix({ onBack, onProceedToF3 }: AllocationMatrixProp
       {showTaskDrawer && selectedTaskId && (
         <F2_3_TaskDrawer
           taskId={selectedTaskId}
-          engagementId={activeEngagementId}
+          engagementId={drawerEngagementId}
           engagement={engagement as Record<string, unknown> | null}
           onClose={() => {
             setShowTaskDrawer(false);
             setSelectedTaskId(null);
           }}
           onSaved={async () => {
-            if (activeEngagementId) {
-              await loadEngagement(activeEngagementId);
+            if (drawerEngagementId) {
+              await loadEngagement(drawerEngagementId);
             }
             // Engagement F3–F7 refresh flag: set via engagements.status or stale marker (follow-up).
           }}

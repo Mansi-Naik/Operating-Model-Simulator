@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
-import { PipelinePreRunGate } from '../PipelinePreRunGate';
-import { setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
+import { useCallback, useEffect, useState } from 'react';
+import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
+import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
+import { isForceRerun, setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
 import { F6_0_PreRun } from './timeline/F6_0_PreRun';
 import { F6_1_ImplementationTimeline } from './timeline/F6_1_ImplementationTimeline';
 import { F6_1_B_DependenciesView } from './timeline/F6_1_B_DependenciesView';
@@ -24,12 +25,28 @@ export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3, initialScr
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
   const activeEngagementId = engagementId ?? engagementIdFromUrl;
+  const { hasCachedResults, isLoading: pipelineLoading } = usePipelineCacheEntry('f6', activeEngagementId);
 
   const [currentScreen, setCurrentScreen] = useState<TimelineScreen>(initialScreen ?? 'pre-run');
+  const goToGantt = useCallback(() => {
+    if (!initialScreen) setCurrentScreen('gantt');
+  }, [initialScreen]);
+  useMountPipelineCacheRedirect('f6', activeEngagementId, goToGantt, {
+    enabled: !initialScreen,
+  });
 
   useEffect(() => {
     if (initialScreen) setCurrentScreen(initialScreen);
   }, [initialScreen]);
+
+  const handleGenerateTimeline = () => {
+    if (!isForceRerun() && hasCachedResults) {
+      setCurrentScreen('gantt');
+      return;
+    }
+    setForceRerunFlag(false);
+    setCurrentScreen('loading');
+  };
 
   const renderScreen = () => {
     switch (currentScreen) {
@@ -41,10 +58,7 @@ export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3, initialScr
             onSkipToResults={() => setCurrentScreen('gantt')}
           >
             <F6_0_PreRun
-              onGenerateTimeline={() => {
-                setForceRerunFlag(false);
-                setCurrentScreen('loading');
-              }}
+              onGenerateTimeline={handleGenerateTimeline}
               onBack={onBack}
               onGoToF5={onGoToF5}
             />
@@ -92,6 +106,15 @@ export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3, initialScr
         return <F6_2_ScenarioComparison onBack={() => setCurrentScreen('implementation')} />;
     }
   };
+
+  if (
+    !initialScreen &&
+    !isForceRerun() &&
+    pipelineLoading &&
+    (currentScreen === 'pre-run' || currentScreen === 'loading')
+  ) {
+    return <PipelineCacheLoading />;
+  }
 
   return <>{renderScreen()}</>;
 }
