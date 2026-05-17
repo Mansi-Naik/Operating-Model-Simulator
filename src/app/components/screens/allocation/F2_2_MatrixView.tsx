@@ -53,7 +53,13 @@ export function F2_2_MatrixView({
   const activeEngagementId = engagementId ?? engagementIdFromUrl;
   const { engagement, tasks: dbTasks, loadEngagement, loading: engagementLoading } =
     useEngagement(activeEngagementId);
-  const { f2_data, f2_exists, isLoading: pipelineLoading } = usePipelineRuns(activeEngagementId);
+  const { f2_data, f2_exists, f2_complete, isLoading: pipelineLoading } =
+    usePipelineRuns(activeEngagementId);
+
+  useEffect(() => {
+    if (!activeEngagementId) return;
+    void loadEngagement(activeEngagementId);
+  }, [activeEngagementId, loadEngagement]);
 
   useEffect(() => {
     if (pipelineLoading || !activeEngagementId) return;
@@ -255,11 +261,31 @@ export function F2_2_MatrixView({
         </div>
       </div>
 
+      {fallbackCount > 0 ? (
+        <div className="mb-6 rounded-xl border border-[#FFAB28]/40 bg-[#FFF0DC] p-4 flex gap-3">
+          <AlertTriangle className="w-5 h-5 text-[#FFAB28] shrink-0 mt-0.5" />
+          <div className="text-[14px] text-[#161916] leading-relaxed">
+            <p className="font-semibold mb-1">AI allocations are missing for most tasks</p>
+            <p className="text-[#494949]">
+              This usually happens after re-saving intake tasks (which replaces task rows) or a partial
+              generation run. Only {savedAllocationCount} of {allTaskRows.length} tasks still have saved AI
+              predictions. Click <strong>Re-run</strong> above to regenerate all allocations and confidence
+              scores.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
       {/* Title */}
       <div className="mb-6">
         <h1 className="text-[24px] font-bold text-[#161916]">Allocation matrix</h1>
         <p className="text-[13px] text-[#6D7069]">
-          {filteredTasks.length} {filteredTasks.length === 1 ? 'task' : 'tasks'} · Generated just now
+          {filteredTasks.length} {filteredTasks.length === 1 ? 'task' : 'tasks'}
+          {f2_complete
+            ? ' · All tasks have saved AI allocations'
+            : fallbackCount > 0
+              ? ` · ${savedAllocationCount} of ${allTaskRows.length} with saved AI allocations`
+              : ' · Generated just now'}
         </p>
       </div>
 

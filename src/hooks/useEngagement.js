@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { buildF2PreserveMap, mergePreservedF2Fields } from "../lib/pipelineCacheUtils.js";
 import { supabase } from "../supabaseClient";
 
 function isUuid(value) {
@@ -223,11 +224,25 @@ export function useEngagement(engagementId) {
         return false;
       }
 
-      const rows = sanitizeTasksForInsert(tasksArray, id);
-
       setLoading(true);
       setError(null);
       try {
+        const { data: existingTasks, error: existingError } = await supabase
+          .from("tasks")
+          .select(
+            "task_id, task_name, user_allocation, user_override_reason, ai_allocation, ai_confidence_raw, ai_confidence_calibrated, ai_primary_capability, ai_rationale, ai_risk_factors, ai_prerequisites",
+          )
+          .eq("engagement_id", id);
+        if (existingError) {
+          setError(normalizeError(existingError));
+          return false;
+        }
+
+        const preserveMap = buildF2PreserveMap(Array.isArray(existingTasks) ? existingTasks : []);
+        const rows = sanitizeTasksForInsert(tasksArray, id).map((row) =>
+          mergePreservedF2Fields(row, preserveMap),
+        );
+
         // Replace mode: clear existing tasks for this engagement before inserting the new list.
         // This avoids duplicating rows when the user re-saves step 3.
         const { error: deleteError } = await supabase.from("tasks").delete().eq("engagement_id", id);

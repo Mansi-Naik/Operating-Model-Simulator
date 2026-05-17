@@ -12,7 +12,7 @@ import { usePipelineRuns } from './usePipelineRuns.js'
 export function pipelineFeatureExists(feature, pipeline) {
   switch (feature) {
     case 'f2':
-      return pipeline.f2_exists
+      return pipeline.f2_complete
     case 'f3':
       return pipeline.f3_exists
     case 'f4':

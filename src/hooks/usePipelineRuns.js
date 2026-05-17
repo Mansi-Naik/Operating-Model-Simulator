@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { dedupeLatestRedesignsByRole, normalizeF3Roles } from '../lib/f3RolesStorage.js'
-import { hasMeaningfulJson, tasksHaveF2Allocations } from '../lib/pipelineCacheUtils.js'
+import { hasMeaningfulJson, tasksFullyAllocated, tasksHaveF2Allocations } from '../lib/pipelineCacheUtils.js'
 import { supabase } from '../supabaseClient.js'
 
 /**
@@ -84,6 +84,7 @@ function f6TimelineExist(f6) {
 const EMPTY_STATE = {
   isLoading: true,
   f2_exists: false,
+  f2_complete: false,
   f3_exists: false,
   f4_exists: false,
   f5_exists: false,
@@ -135,6 +136,7 @@ export function usePipelineRuns(engagementId) {
       const f2FromMatrix = hasMeaningfulJson(row?.f2_matrix) ? asObj(row.f2_matrix) : null
       const f2FromTasks = tasksHaveF2Allocations(tasks)
       const f2_exists = f2FromMatrix != null || f2FromTasks
+      const f2_complete = f2FromMatrix != null || tasksFullyAllocated(tasks)
       /** @type {Record<string, unknown> | null} */
       const f2_data = f2_exists
         ? {
@@ -160,6 +162,7 @@ export function usePipelineRuns(engagementId) {
       setState({
         isLoading: false,
         f2_exists,
+        f2_complete,
         f3_exists,
         f4_exists,
         f5_exists,
