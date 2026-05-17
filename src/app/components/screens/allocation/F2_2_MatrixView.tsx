@@ -51,8 +51,9 @@ export function F2_2_MatrixView({
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
   const activeEngagementId = engagementId ?? engagementIdFromUrl;
-  const { engagement, tasks: dbTasks, loadEngagement } = useEngagement(activeEngagementId);
-  const { f2_data, isLoading: pipelineLoading } = usePipelineRuns(activeEngagementId);
+  const { engagement, tasks: dbTasks, loadEngagement, loading: engagementLoading } =
+    useEngagement(activeEngagementId);
+  const { f2_data, f2_exists, isLoading: pipelineLoading } = usePipelineRuns(activeEngagementId);
 
   useEffect(() => {
     if (pipelineLoading || !activeEngagementId) return;
@@ -136,8 +137,18 @@ export function F2_2_MatrixView({
     });
   }, [dbTasks]);
   const allTaskRows = Array.isArray(dbTasks) ? dbTasks : [];
-  const fallbackCount = allTaskRows.filter((row: any) => !finalAllocation(row)).length;
-  const matrixReady = allTaskRows.length > 0 && fallbackCount === 0;
+  const fallbackCount = allTaskRows.filter((row: any) => {
+    if (finalAllocation(row)) return false;
+    if (row?.regulatory_constraint === true) return false;
+    return true;
+  }).length;
+  const savedAllocationCount = allTaskRows.length - fallbackCount;
+  const generationHadResults = (generationResult?.processedTaskIds?.length ?? 0) > 0;
+  const hasPersistedF2 = f2_exists || generationHadResults;
+  const isLoadingData =
+    engagementLoading || (pipelineLoading && allTaskRows.length === 0 && Boolean(f2_data?.tasks?.length));
+  const canProceedToF3 =
+    allTaskRows.length > 0 && !isLoadingData && (fallbackCount === 0 || hasPersistedF2);
   const roleOptions = useMemo(() => ['All', ...Array.from(new Set(tasks.map((t) => t.role)))], [tasks]);
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
@@ -438,18 +449,24 @@ export function F2_2_MatrixView({
       {/* Proceed to F3 */}
       {onProceedToF3 && (
         <div className="mt-8 flex flex-col items-end gap-2">
-          {!matrixReady ? (
+          {isLoadingData ? (
             <div className="text-[13px] text-[#6D7069]">
-              Waiting for allocation results to finish saving...
+              Loading allocation results…
+            </div>
+          ) : !canProceedToF3 ? (
+            <div className="text-[13px] text-[#6D7069]">
+              Add tasks in intake before continuing to role redesign.
             </div>
           ) : fallbackCount > 0 ? (
             <div className="text-[13px] text-[#6D7069]">
-              {fallbackCount} task{fallbackCount === 1 ? '' : 's'} defaulted to HUMAN because no saved allocation was returned.
+              {fallbackCount} task{fallbackCount === 1 ? '' : 's'} show as HUMAN (default) with no saved AI allocation
+              — you can continue or re-run to fill gaps. ({savedAllocationCount} of {allTaskRows.length}{' '}
+              saved)
             </div>
           ) : null}
           <button
             onClick={onProceedToF3}
-            disabled={!matrixReady}
+            disabled={!canProceedToF3}
             className="h-11 px-8 bg-[#FD4E59] text-white text-[15px] font-semibold rounded-lg hover:bg-[#FD4E59]/90 disabled:opacity-50 disabled:pointer-events-none"
           >
             Proceed to Roles →
