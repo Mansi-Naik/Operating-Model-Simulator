@@ -25,7 +25,7 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
   const activeEngagementId = engagementIdProp ?? engagementIdFromUrl;
 
   const { engagement, tasks, loading, error, loadEngagement } = useEngagement(activeEngagementId);
-  const { hasCachedResults, isLoading: pipelineLoading, refresh: refreshPipeline } = usePipelineCacheEntry(
+  const { isLoading: pipelineLoading, refresh: refreshPipeline } = usePipelineCacheEntry(
     'f3',
     activeEngagementId,
   );
@@ -37,6 +37,8 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
   });
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [selectedEmergentRole, setSelectedEmergentRole] = useState<string | null>(null);
+  const [generationRunKey, setGenerationRunKey] = useState(0);
+  const [forceGeneration, setForceGeneration] = useState(false);
 
   useEffect(() => {
     if (activeEngagementId) {
@@ -50,19 +52,19 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
   );
 
   const handleGenerate = useCallback(() => {
-    if (hasCachedResults) {
-      setCurrentScreen('roles-grid');
-      return;
-    }
+    setForceGeneration(false);
+    setGenerationRunKey((k) => k + 1);
     setCurrentScreen('generating');
-  }, [hasCachedResults]);
+  }, []);
 
-  const handleGenerationComplete = useCallback(() => {
+  const handleGenerationComplete = useCallback(async () => {
+    setForceGeneration(false);
     if (activeEngagementId) {
-      void loadEngagement(activeEngagementId);
+      await loadEngagement(activeEngagementId);
+      await refreshPipeline();
     }
     setCurrentScreen('roles-grid');
-  }, [activeEngagementId, loadEngagement]);
+  }, [activeEngagementId, loadEngagement, refreshPipeline]);
 
   const handleRoleClick = (roleName: string) => {
     setSelectedRole(roleName);
@@ -86,7 +88,9 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
     await clearF3SavedState(activeEngagementId);
     await loadEngagement(activeEngagementId);
     await refreshPipeline();
-    setCurrentScreen('pre-run');
+    setForceGeneration(true);
+    setGenerationRunKey((k) => k + 1);
+    setCurrentScreen('generating');
   }, [activeEngagementId, loadEngagement, refreshPipeline]);
 
   const handleBackToGrid = () => {
@@ -123,8 +127,16 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
       case 'generating':
         return (
           <F3_1_Generation
-            onCancel={() => setCurrentScreen('pre-run')}
-            onBack={() => setCurrentScreen('pre-run')}
+            key={generationRunKey}
+            forceGenerate={forceGeneration}
+            onCancel={() => {
+              setForceGeneration(false);
+              setCurrentScreen('pre-run');
+            }}
+            onBack={() => {
+              setForceGeneration(false);
+              setCurrentScreen('pre-run');
+            }}
             engagementId={activeEngagementId}
             onComplete={handleGenerationComplete}
           />
@@ -136,6 +148,11 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
             onRoleClick={handleRoleClick}
             onEmergentRoleClick={handleEmergentRoleClick}
             onReRun={handleReRunToPreRun}
+            onRegenerate={() => {
+              setForceGeneration(true);
+              setGenerationRunKey((k) => k + 1);
+              setCurrentScreen('generating');
+            }}
             onBack={() => setCurrentScreen('pre-run')}
             onProceedToF4={onProceedToF4}
           />

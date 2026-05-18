@@ -38,6 +38,7 @@ interface F3_1_RolesGridProps {
   onRoleClick: (roleName: string) => void;
   onEmergentRoleClick: (roleName: string) => void;
   onReRun: () => void | Promise<void>;
+  onRegenerate?: () => void;
   onBack?: () => void;
   onProceedToF4?: () => void;
 }
@@ -104,6 +105,7 @@ export function F3_1_RolesGrid({
   onRoleClick,
   onEmergentRoleClick,
   onReRun,
+  onRegenerate,
   onBack,
   onProceedToF4,
 }: F3_1_RolesGridProps) {
@@ -117,6 +119,7 @@ export function F3_1_RolesGrid({
   const [pendingRedesigns, setPendingRedesigns] = useState<RoleCard[]>([]);
   const [pendingEmergent, setPendingEmergent] = useState<EmergentCard[]>([]);
   const [confirmedRoles, setConfirmedRoles] = useState<ConfirmedCard[]>([]);
+  const [hasPipelineRoles, setHasPipelineRoles] = useState(false);
 
   const loadPipeline = useCallback(async () => {
     if (!activeId) {
@@ -124,6 +127,7 @@ export function F3_1_RolesGrid({
       setPendingRedesigns([]);
       setPendingEmergent([]);
       setConfirmedRoles([]);
+      setHasPipelineRoles(false);
       setLoading(false);
       return;
     }
@@ -140,12 +144,17 @@ export function F3_1_RolesGrid({
       setPendingRedesigns([]);
       setPendingEmergent([]);
       setConfirmedRoles([]);
+      setHasPipelineRoles(false);
       setLoading(false);
       return;
     }
 
     const bundle = normalizeF3Roles(data?.f3_roles);
     const redesignRows = dedupeLatestRedesignsByRole(bundle.redesigns as Record<string, unknown>[]);
+    setHasPipelineRoles(
+      redesignRows.length > 0 ||
+        (Array.isArray(bundle.emergent_roles) && bundle.emergent_roles.length > 0),
+    );
     const allRedesigns = redesignRows
       .map((r) => pipelineRowToRoleCard(r))
       .filter((x): x is RoleCard => x != null);
@@ -320,6 +329,23 @@ export function F3_1_RolesGrid({
         <h1 className="text-[24px] font-bold text-[#161916]">Future role definitions</h1>
         <p className="text-[13px] text-[#6D7069]">{loading ? 'Loading pipeline…' : loadError ? loadError : summaryLine}</p>
       </div>
+
+      {!loading && !loadError && !hasPipelineRoles && onRegenerate ? (
+        <div className="mb-8 rounded-xl border border-[#FFAB28]/40 bg-[#FFF0DC]/60 p-6">
+          <p className="text-[15px] font-semibold text-[#161916] mb-1">No role designs yet</p>
+          <p className="text-[14px] text-[#494949] mb-4">
+            Generate redesigned roles and AI-suggested emergent roles to review, accept, or reject.
+          </p>
+          <button
+            type="button"
+            onClick={onRegenerate}
+            className="h-11 px-6 bg-[#FD4E59] text-white text-[14px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2"
+          >
+            <Sparkles className="w-4 h-4" />
+            Generate roles
+          </button>
+        </div>
+      ) : null}
 
       {/* Section A — pending redesigned existing roles */}
       <div className="flex items-center justify-between mb-4">

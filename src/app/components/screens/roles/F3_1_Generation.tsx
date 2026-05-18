@@ -8,6 +8,8 @@ interface F3_1_GenerationProps {
   onCancel: () => void;
   onBack?: () => void;
   engagementId?: string | null;
+  /** When true, always run APIs even if pipeline cache still reports saved F3 (e.g. after Re-run). */
+  forceGenerate?: boolean;
   onComplete?: (result: { failedRoles: string[]; roleNames: string[] }) => void;
 }
 
@@ -29,7 +31,13 @@ function roleNamesToRedesign(
     .filter(Boolean);
 }
 
-export function F3_1_Generation({ onCancel, onBack, engagementId, onComplete }: F3_1_GenerationProps) {
+export function F3_1_Generation({
+  onCancel,
+  onBack,
+  engagementId,
+  forceGenerate = false,
+  onComplete,
+}: F3_1_GenerationProps) {
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
   const activeEngagementId = engagementId ?? engagementIdFromUrl;
@@ -127,7 +135,7 @@ export function F3_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
         return;
       }
 
-      if (hasCachedResults) {
+      if (hasCachedResults && !forceGenerate) {
         await onComplete?.({ failedRoles: [], roleNames: [] });
         return;
       }
@@ -235,7 +243,7 @@ export function F3_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
       cancelRef.current = true;
       abortRef.current?.abort();
     };
-  }, [activeEngagementId, loadEngagement, onCancel, onComplete, pipelineLoading, hasCachedResults]);
+  }, [activeEngagementId, loadEngagement, onCancel, onComplete, pipelineLoading, hasCachedResults, forceGenerate]);
 
   const handleCancel = () => {
     cancelRef.current = true;

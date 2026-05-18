@@ -62,6 +62,12 @@ export function useMountPipelineCacheRedirect(feature, engagementId, onRedirect,
   }, [engagementId, enabled])
 
   useEffect(() => {
+    if (!hasCachedResults) {
+      appliedRef.current = false
+    }
+  }, [hasCachedResults])
+
+  useEffect(() => {
     if (!enabled || isLoading || !hasCachedResults || appliedRef.current) return
     appliedRef.current = true
     onRedirect()
