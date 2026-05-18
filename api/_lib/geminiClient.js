@@ -251,6 +251,7 @@ export default async function callGemini(prompt, options) {
         }
         console.warn(`[Gemini] ${model} unclassified errorType=${errorType}, treating as fatal`)
         throw error
+      }
     }
   }
 
