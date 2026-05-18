@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import callGemini, { geminiLogExtras } from './_lib/geminiClient.js'
 import { applyCorsHeaders, resolveAllowedCorsOrigin } from '../src/lib/apiCors.js'
 import { buildEmergentRolesPrompt } from '../src/lib/emergentRolesPrompt.js'
 import { generateAdvisories } from '../src/lib/advisoryGeneration.js'
@@ -7,7 +7,6 @@ import { dedupeLatestRedesignsByRole, f3RolesToJsonb, normalizeF3Roles } from '.
 import { getFinalAllocation } from '../src/lib/roleAggregation.js'
 import { createSupabaseAdmin } from '../src/lib/supabaseAdmin.js'
 
-const MODEL_ID = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 const FEATURE = 'f3_emergent'
 
 /**
@@ -188,6 +187,8 @@ export default async function handler(req, res) {
   let completionTokens = null
   /** @type {number | null} */
   let totalTokens = null
+  /** @type {any} */
+  let geminiMeta = null
 
   try {
     const apiKey = process.env.GEMINI_API_KEY
@@ -353,27 +354,16 @@ export default async function handler(req, res) {
       },
     })
 
-    const genAI = new GoogleGenerativeAI(apiKey)
-    const model = genAI.getGenerativeModel({
-      model: MODEL_ID,
-      generationConfig: {
-        temperature: 0.2,
-        responseMimeType: 'application/json',
-        maxOutputTokens: 8192,
-      },
+    geminiMeta = await callGemini(promptText, {
+      feature: 'f3_emergent',
+      temperature: 0.2,
+      response_mime_type: 'application/json',
+      max_output_tokens: 8192,
     })
-
-    const geminiResult = await model.generateContent(promptText)
-    const response = geminiResult.response
-    responseText = typeof response?.text === 'function' ? response.text() : ''
-
-    const usage = response?.usageMetadata
-    if (usage) {
-      promptTokens = typeof usage.promptTokenCount === 'number' ? usage.promptTokenCount : null
-      completionTokens =
-        typeof usage.candidatesTokenCount === 'number' ? usage.candidatesTokenCount : null
-      totalTokens = typeof usage.totalTokenCount === 'number' ? usage.totalTokenCount : null
-    }
+    responseText = geminiMeta.response_text
+    promptTokens = geminiMeta.prompt_tokens
+    completionTokens = geminiMeta.completion_tokens
+    totalTokens = geminiMeta.total_tokens
 
     const parsed = parseJsonResponse(responseText)
     if (!parsed.ok) {
@@ -383,15 +373,10 @@ export default async function handler(req, res) {
         const { error: logErr } = await insertLlmCallLog(supabase, {
           engagement_id: engagementId,
           feature: FEATURE,
-          model: MODEL_ID,
           prompt_text: promptText,
           response_text: responseText,
           status: 'error',
-          error_message: logErrorMessage,
-          prompt_tokens: promptTokens,
-          completion_tokens: completionTokens,
-          total_tokens: totalTokens,
-          duration_ms: durationMs(),
+          ...geminiLogExtras(geminiMeta, { errorMessage: logErrorMessage, durationFallbackMs: durationMs() }),
         })
         if (logErr) console.error('[detect-emergent-roles] llm_call_logs (parse error):', logErr)
       }
@@ -406,15 +391,10 @@ export default async function handler(req, res) {
         const { error: logErr } = await insertLlmCallLog(supabase, {
           engagement_id: engagementId,
           feature: FEATURE,
-          model: MODEL_ID,
           prompt_text: promptText,
           response_text: responseText,
           status: 'error',
-          error_message: validationError,
-          prompt_tokens: promptTokens,
-          completion_tokens: completionTokens,
-          total_tokens: totalTokens,
-          duration_ms: durationMs(),
+          ...geminiLogExtras(geminiMeta, { errorMessage: validationError, durationFallbackMs: durationMs() }),
         })
         if (logErr) console.error('[detect-emergent-roles] llm_call_logs (validation error):', logErr)
       }
@@ -434,15 +414,10 @@ export default async function handler(req, res) {
     const { error: logInsertErr } = await insertLlmCallLog(supabase, {
       engagement_id: engagementId,
       feature: FEATURE,
-      model: MODEL_ID,
       prompt_text: promptText,
       response_text: responseText,
       status: 'success',
-      error_message: null,
-      prompt_tokens: promptTokens,
-      completion_tokens: completionTokens,
-      total_tokens: totalTokens,
-      duration_ms: durationMs(),
+      ...geminiLogExtras(geminiMeta, { errorMessage: null, durationFallbackMs: durationMs() }),
     })
     if (logInsertErr) {
       console.error('[detect-emergent-roles] llm_call_logs insert failed:', logInsertErr)
@@ -488,15 +463,10 @@ export default async function handler(req, res) {
         await insertLlmCallLog(supabase, {
           engagement_id: engagementId,
           feature: FEATURE,
-          model: MODEL_ID,
           prompt_text: promptText,
           response_text: responseText,
           status: 'error',
-          error_message: message,
-          prompt_tokens: promptTokens,
-          completion_tokens: completionTokens,
-          total_tokens: totalTokens,
-          duration_ms: durationMs(),
+          ...geminiLogExtras(geminiMeta, { errorMessage: message, durationFallbackMs: durationMs() }),
         })
       } catch (logErr) {
         console.error('[detect-emergent-roles] Failed to log error row:', logErr)

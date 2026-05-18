@@ -1,11 +1,10 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import callGemini, { geminiLogExtras } from './_lib/geminiClient.js'
 import { applyCorsHeaders, resolveAllowedCorsOrigin } from '../src/lib/apiCors.js'
 import { matchCapabilities } from '../src/lib/capabilityLibrary.js'
 import { buildAllocationPrompt } from '../src/lib/promptTemplates.js'
 import { createSupabaseAdmin } from '../src/lib/supabaseAdmin.js'
 import { calibrateConfidence } from '../src/lib/confidenceCalibration.js'
 
-const MODEL_ID = 'gemini-2.5-flash'
 const FEATURE = 'f2_allocation'
 const QUALITY_ALERT_FEATURE = 'f2_allocation_quality_alert'
 
@@ -51,6 +50,8 @@ async function maybeLogF2AllocationQualityAlert(supabase, engagementId) {
       engagement_id: engagementId,
       feature: QUALITY_ALERT_FEATURE,
       model: 'system',
+      fallback_occurred: false,
+      fallback_attempts: null,
       prompt_text: null,
       response_text: null,
       status: 'warning',
@@ -228,6 +229,8 @@ export default async function handler(req, res) {
   let completionTokens = null
   /** @type {number | null} */
   let totalTokens = null
+  /** @type {any} */
+  let geminiMeta = null
 
   try {
     const apiKey = process.env.GEMINI_API_KEY
@@ -303,25 +306,15 @@ export default async function handler(req, res) {
     )
     promptText = buildAllocationPrompt(taskRow, candidates, engagementContext)
 
-    const genAI = new GoogleGenerativeAI(apiKey)
-    const model = genAI.getGenerativeModel({
-      model: MODEL_ID,
-      generationConfig: {
-        responseMimeType: 'application/json',
-      },
+    geminiMeta = await callGemini(promptText, {
+      feature: 'f2_allocation',
+      temperature: 0.2,
+      response_mime_type: 'application/json',
     })
-
-    const geminiResult = await model.generateContent(promptText)
-    const response = geminiResult.response
-    responseText = typeof response?.text === 'function' ? response.text() : ''
-
-    const usage = response?.usageMetadata
-    if (usage) {
-      promptTokens = typeof usage.promptTokenCount === 'number' ? usage.promptTokenCount : null
-      completionTokens =
-        typeof usage.candidatesTokenCount === 'number' ? usage.candidatesTokenCount : null
-      totalTokens = typeof usage.totalTokenCount === 'number' ? usage.totalTokenCount : null
-    }
+    responseText = geminiMeta.response_text
+    promptTokens = geminiMeta.prompt_tokens
+    completionTokens = geminiMeta.completion_tokens
+    totalTokens = geminiMeta.total_tokens
 
     const parsed = parseJsonResponse(responseText)
     if (!parsed.ok) {
@@ -331,15 +324,10 @@ export default async function handler(req, res) {
         const { error: logErr } = await insertLlmCallLog(supabase, {
           engagement_id: engagementId,
           feature: FEATURE,
-          model: MODEL_ID,
           prompt_text: promptText,
           response_text: responseText,
           status: 'error',
-          error_message: logErrorMessage,
-          prompt_tokens: promptTokens,
-          completion_tokens: completionTokens,
-          total_tokens: totalTokens,
-          duration_ms: durationMs(),
+          ...geminiLogExtras(geminiMeta, { errorMessage: logErrorMessage, durationFallbackMs: durationMs() }),
         })
         if (logErr) console.error('[predict-allocation] llm_call_logs (parse error):', logErr)
       }
@@ -354,15 +342,10 @@ export default async function handler(req, res) {
         const { error: logErr } = await insertLlmCallLog(supabase, {
           engagement_id: engagementId,
           feature: FEATURE,
-          model: MODEL_ID,
           prompt_text: promptText,
           response_text: responseText,
           status: 'error',
-          error_message: validationError,
-          prompt_tokens: promptTokens,
-          completion_tokens: completionTokens,
-          total_tokens: totalTokens,
-          duration_ms: durationMs(),
+          ...geminiLogExtras(geminiMeta, { errorMessage: validationError, durationFallbackMs: durationMs() }),
         })
         if (logErr) console.error('[predict-allocation] llm_call_logs (validation error):', logErr)
       }
@@ -392,15 +375,10 @@ export default async function handler(req, res) {
     const { error: logInsertErr } = await insertLlmCallLog(supabase, {
       engagement_id: engagementId,
       feature: FEATURE,
-      model: MODEL_ID,
       prompt_text: promptText,
       response_text: responseText,
       status: logStatus,
-      error_message: logErrorMessage,
-      prompt_tokens: promptTokens,
-      completion_tokens: completionTokens,
-      total_tokens: totalTokens,
-      duration_ms: durationMs(),
+      ...geminiLogExtras(geminiMeta, { errorMessage: logErrorMessage, durationFallbackMs: durationMs() }),
     })
     if (logInsertErr) {
       console.error('[predict-allocation] llm_call_logs insert failed:', logInsertErr)
@@ -430,15 +408,13 @@ export default async function handler(req, res) {
       await insertLlmCallLog(supabase, {
         engagement_id: engagementId,
         feature: FEATURE,
-        model: MODEL_ID,
         prompt_text: promptText,
         response_text: responseText,
         status: 'error',
-        error_message: `Task update failed: ${updateErr.message}`,
-        prompt_tokens: promptTokens,
-        completion_tokens: completionTokens,
-        total_tokens: totalTokens,
-        duration_ms: durationMs(),
+        ...geminiLogExtras(geminiMeta, {
+          errorMessage: `Task update failed: ${updateErr.message}`,
+          durationFallbackMs: durationMs(),
+        }),
       })
       res.status(500).json({ error: 'Failed to save prediction to task', details: updateErr.message })
       return
@@ -467,15 +443,10 @@ export default async function handler(req, res) {
         await insertLlmCallLog(supabase, {
           engagement_id: engagementId,
           feature: FEATURE,
-          model: MODEL_ID,
           prompt_text: promptText,
           response_text: responseText,
           status: 'error',
-          error_message: message,
-          prompt_tokens: promptTokens,
-          completion_tokens: completionTokens,
-          total_tokens: totalTokens,
-          duration_ms: durationMs(),
+          ...geminiLogExtras(geminiMeta, { errorMessage: message, durationFallbackMs: durationMs() }),
         })
       } catch (logErr) {
         console.error('[predict-allocation] Failed to log error row:', logErr)

@@ -1,12 +1,11 @@
 import fs from 'node:fs/promises'
 import formidable from 'formidable'
 import { jsonrepair } from 'jsonrepair'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import callGemini, { geminiLogExtras } from './_lib/geminiClient.js'
 import { applyCorsHeaders, resolveAllowedCorsOrigin } from '../src/lib/apiCors.js'
 import { buildExtractionPrompt } from '../src/lib/extractionPrompt.js'
 import { createSupabaseAdmin } from '../src/lib/supabaseAdmin.js'
 
-const MODEL_ID = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 const FEATURE = 'f1_extraction'
 const MAX_BYTES = 10 * 1024 * 1024
 const MIN_TEXT = 50
@@ -315,6 +314,8 @@ export default async function handler(req, res) {
   let supabase = null
   let promptText = ''
   let responseText = ''
+  /** @type {any} */
+  let geminiMeta = null
 
   try {
     supabase = createSupabaseAdmin()
@@ -392,19 +393,13 @@ export default async function handler(req, res) {
     const maxOutputTokens =
       Number.isFinite(extractMaxOut) && extractMaxOut > 0 ? Math.min(65536, Math.floor(extractMaxOut)) : 65536
 
-    const genAI = new GoogleGenerativeAI(apiKey)
-    const model = genAI.getGenerativeModel({
-      model: MODEL_ID,
-      generationConfig: {
-        temperature: 0.1,
-        responseMimeType: 'application/json',
-        maxOutputTokens,
-      },
+    geminiMeta = await callGemini(promptText, {
+      feature: 'f1_extraction',
+      temperature: 0.1,
+      response_mime_type: 'application/json',
+      max_output_tokens: maxOutputTokens,
     })
-
-    const geminiResult = await model.generateContent(promptText)
-    responseText =
-      typeof geminiResult.response?.text === 'function' ? geminiResult.response.text() : ''
+    responseText = geminiMeta.response_text
 
     let parsed
     let jsonRepaired = false
@@ -417,15 +412,13 @@ export default async function handler(req, res) {
       await insertLlmCallLog(supabase, {
         engagement_id: null,
         feature: FEATURE,
-        model: MODEL_ID,
         prompt_text: promptText,
         response_text: responseText,
         status: 'error',
-        error_message: `Invalid JSON from Gemini: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
-        prompt_tokens: null,
-        completion_tokens: null,
-        total_tokens: null,
-        duration_ms: Date.now() - started,
+        ...geminiLogExtras(geminiMeta, {
+          errorMessage: `Invalid JSON from Gemini: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+          durationFallbackMs: Date.now() - started,
+        }),
       })
       res.status(500).json({ error: 'Extraction produced invalid output. Try again or use the guided form.' })
       return
@@ -442,15 +435,10 @@ export default async function handler(req, res) {
       await insertLlmCallLog(supabase, {
         engagement_id: null,
         feature: FEATURE,
-        model: MODEL_ID,
         prompt_text: promptText,
         response_text: responseText,
         status: 'error',
-        error_message: validationErr,
-        prompt_tokens: null,
-        completion_tokens: null,
-        total_tokens: null,
-        duration_ms: Date.now() - started,
+        ...geminiLogExtras(geminiMeta, { errorMessage: validationErr, durationFallbackMs: Date.now() - started }),
       })
       res.status(500).json({ error: 'Extraction produced invalid output. Try again or use the guided form.' })
       return
@@ -461,15 +449,10 @@ export default async function handler(req, res) {
     await insertLlmCallLog(supabase, {
       engagement_id: null,
       feature: FEATURE,
-      model: MODEL_ID,
       prompt_text: promptText,
       response_text: responseText,
       status: 'success',
-      error_message: null,
-      prompt_tokens: null,
-      completion_tokens: null,
-      total_tokens: null,
-      duration_ms: Date.now() - started,
+      ...geminiLogExtras(geminiMeta, { errorMessage: null, durationFallbackMs: Date.now() - started }),
     })
 
     res.status(200).json(body)
@@ -481,15 +464,10 @@ export default async function handler(req, res) {
         await insertLlmCallLog(supabase, {
           engagement_id: null,
           feature: FEATURE,
-          model: MODEL_ID,
           prompt_text: promptText,
           response_text: responseText,
           status: 'error',
-          error_message: message,
-          prompt_tokens: null,
-          completion_tokens: null,
-          total_tokens: null,
-          duration_ms: Date.now() - started,
+          ...geminiLogExtras(geminiMeta, { errorMessage: message, durationFallbackMs: Date.now() - started }),
         })
       }
     } catch (logErr) {
