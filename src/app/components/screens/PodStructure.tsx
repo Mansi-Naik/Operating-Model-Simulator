@@ -1,7 +1,11 @@
 import { useCallback, useState } from 'react';
-import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
+import {
+  useForceRerun,
+  useMountPipelineCacheRedirect,
+  usePipelineCacheEntry,
+} from '../../../hooks/usePipelineCacheEntry';
 import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
-import { isForceRerun } from '../../../lib/pipelineCacheUtils';
+import { isForceRerun, setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
 import { F4_0_PreRun } from './pods/F4_0_PreRun';
 import { F4_1_VariantSelector } from './pods/F4_1_VariantSelector';
 import { F4_2_OrgRollup } from './pods/F4_2_OrgRollup';
@@ -34,11 +38,15 @@ export function PodStructure({
   const [currentScreen, setCurrentScreen] = useState<PodScreen>(initialScreen);
   const [showMathDrawer, setShowMathDrawer] = useState(false);
   const goToOrgRollup = useCallback(() => setCurrentScreen('org-rollup'), []);
+  const forceRerun = useForceRerun();
   useMountPipelineCacheRedirect('f4', activeEngagementId, goToOrgRollup, {
-    enabled: initialScreen === 'pre-run',
+    enabled: currentScreen === 'pre-run' && !forceRerun,
   });
 
-  const handleReRunToPreRun = () => setCurrentScreen('pre-run');
+  const handleReRunToPreRun = useCallback(() => {
+    setForceRerunFlag(true);
+    setCurrentScreen('pre-run');
+  }, []);
 
   const handleGeneratePodVariants = () => {
     if (!isForceRerun() && hasCachedResults) {

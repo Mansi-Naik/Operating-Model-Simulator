@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useEngagement } from '../../../hooks/useEngagement';
-import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
+import {
+  useForceRerun,
+  useMountPipelineCacheRedirect,
+  usePipelineCacheEntry,
+} from '../../../hooks/usePipelineCacheEntry';
 import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
 import { isForceRerun, setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
 import { computeF3PreRunPreview } from '../../../lib/f3PreRunPreview';
@@ -29,7 +33,10 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
 
   const [currentScreen, setCurrentScreen] = useState<RolesScreen>('pre-run');
   const goToRolesGrid = useCallback(() => setCurrentScreen('roles-grid'), []);
-  useMountPipelineCacheRedirect('f3', activeEngagementId, goToRolesGrid);
+  const forceRerun = useForceRerun();
+  useMountPipelineCacheRedirect('f3', activeEngagementId, goToRolesGrid, {
+    enabled: currentScreen === 'pre-run' && !forceRerun,
+  });
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [selectedEmergentRole, setSelectedEmergentRole] = useState<string | null>(null);
 
@@ -76,9 +83,10 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
     setCurrentScreen('emergent-role-detail');
   };
 
-  const handleReRunToPreRun = () => {
+  const handleReRunToPreRun = useCallback(() => {
+    setForceRerunFlag(true);
     setCurrentScreen('pre-run');
-  };
+  }, []);
 
   const handleBackToGrid = () => {
     if (typeof window !== 'undefined') {

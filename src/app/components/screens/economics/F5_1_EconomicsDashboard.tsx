@@ -1,7 +1,8 @@
 import { Settings, ArrowRight, TrendingUp, Check, Sparkles, Info } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PipelineReRunButton } from '../../PipelineReRunButton';
-import { isForceRerun, setForceRerunFlag } from '../../../../lib/pipelineCacheUtils';
+import { setForceRerunFlag } from '../../../../lib/pipelineCacheUtils';
+import { useForceRerun } from '../../../../hooks/usePipelineCacheEntry';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { normalizeF3Roles } from '../../../../lib/f3RolesStorage';
 import { runFullEconomics } from '../../../../lib/economicsEngine';
@@ -226,6 +227,8 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
   );
   const [sensitivityNarrative, setSensitivityNarrative] = useState('Generating analysis...');
   const [narrativePending, setNarrativePending] = useState(false);
+  const [reRunNonce, setReRunNonce] = useState(0);
+  const forceRerun = useForceRerun();
 
   const loadPipeline = useCallback(async () => {
     if (!engagementIdFromUrl) {
@@ -257,13 +260,13 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
     setAssumptionsUsed(asObj(savedEconomics.assumptions_used));
     const hasSaved = Boolean(savedEconomics.economics_result);
     setHasSavedEconomics(hasSaved);
-    if (hasSaved && !isForceRerun()) {
+    if (hasSaved && !forceRerun) {
       setSavedEconomicsSnapshot(asObj(savedEconomics.economics_result));
     } else {
       setSavedEconomicsSnapshot(null);
     }
     setPipelineLoading(false);
-  }, [engagementIdFromUrl, refreshKey]);
+  }, [engagementIdFromUrl, refreshKey, forceRerun]);
 
   useEffect(() => {
     void loadPipeline();
@@ -299,19 +302,31 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
   }, [engagement, tasks, selectedVariant, f3Roles, preferences]);
 
   const displayEconomics = useMemo(() => {
-    if (savedEconomicsSnapshot && hasSavedEconomics && !isForceRerun()) {
+    if (savedEconomicsSnapshot && hasSavedEconomics && !forceRerun) {
       return savedEconomicsSnapshot;
     }
     return economicsResult;
-  }, [savedEconomicsSnapshot, hasSavedEconomics, economicsResult]);
+  }, [savedEconomicsSnapshot, hasSavedEconomics, economicsResult, forceRerun]);
+
+  const handleConfirmReRun = useCallback(() => {
+    setForceRerunFlag(true);
+    setSavedEconomicsSnapshot(null);
+    setHasSavedEconomics(false);
+    setReRunNonce((n) => n + 1);
+    if (engagementIdFromUrl) void loadEngagement(engagementIdFromUrl);
+    void loadPipeline();
+  }, [engagementIdFromUrl, loadEngagement, loadPipeline]);
 
   const economicsSignature = useMemo(
-    () => (economicsResult ? JSON.stringify({ selectedVariantName, assumptionsUsed, economicsResult }) : ''),
-    [economicsResult, selectedVariantName, assumptionsUsed],
+    () =>
+      economicsResult
+        ? JSON.stringify({ reRunNonce, selectedVariantName, assumptionsUsed, economicsResult })
+        : '',
+    [economicsResult, reRunNonce, selectedVariantName, assumptionsUsed],
   );
   const sensitivitySignature = useMemo(
-    () => (economicsResult ? JSON.stringify(economicsResult.sensitivity ?? {}) : ''),
-    [economicsResult],
+    () => (economicsResult ? JSON.stringify({ reRunNonce, sensitivity: economicsResult.sensitivity ?? {} }) : ''),
+    [economicsResult, reRunNonce],
   );
 
   useEffect(() => {
@@ -418,15 +433,7 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
       <div className="p-10 max-w-[1204px] mx-auto">
         <div className="text-[13px] text-[#161916] mb-6">ECONOMICS</div>
         <div className="mb-6 text-[14px] text-[#FD4E59] border border-[#FD4E59]/30 rounded-lg p-4 bg-[#FCE4D6]/30">{error}</div>
-        <PipelineReRunButton
-          onConfirmRerun={() => {
-            setForceRerunFlag(true);
-            setSavedEconomicsSnapshot(null);
-            setHasSavedEconomics(false);
-            if (engagementIdFromUrl) void loadEngagement(engagementIdFromUrl);
-            void loadPipeline();
-          }}
-        />
+        <PipelineReRunButton onConfirmRerun={handleConfirmReRun} />
       </div>
     );
   }
@@ -469,15 +476,7 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
         <div className="flex items-center justify-between mb-6">
           <div className="text-[13px] text-[#161916]">ECONOMICS</div>
           <div className="flex items-center gap-2">
-            <PipelineReRunButton
-              onConfirmRerun={() => {
-                setForceRerunFlag(true);
-                setSavedEconomicsSnapshot(null);
-                setHasSavedEconomics(false);
-                if (engagementIdFromUrl) void loadEngagement(engagementIdFromUrl);
-                void loadPipeline();
-              }}
-            />
+            <PipelineReRunButton onConfirmRerun={handleConfirmReRun} />
             <button type="button" className="h-9 px-3 border border-[#494949]/30 text-[#494949] rounded-md hover:bg-[#494949]/5">
               <Settings className="w-4 h-4" />
             </button>

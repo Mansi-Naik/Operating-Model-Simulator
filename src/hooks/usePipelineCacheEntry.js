@@ -1,6 +1,20 @@
-import { useCallback, useEffect, useRef } from 'react'
-import { isForceRerun } from '../lib/pipelineCacheUtils.js'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { isForceRerun, subscribeForceRerun } from '../lib/pipelineCacheUtils.js'
 import { usePipelineRuns } from './usePipelineRuns.js'
+
+/**
+ * URL `forceRerun` flag mirrored into React state so updates re-render cache hooks.
+ */
+export function useForceRerun() {
+  const [forceRerun, setForceRerun] = useState(() => isForceRerun())
+
+  useEffect(() => {
+    setForceRerun(isForceRerun())
+    return subscribeForceRerun(() => setForceRerun(isForceRerun()))
+  }, [])
+
+  return forceRerun
+}
 
 /** @typedef {'f2' | 'f3' | 'f4' | 'f5' | 'f6'} PipelineFeature */
 
@@ -32,7 +46,7 @@ export function pipelineFeatureExists(feature, pipeline) {
  */
 export function usePipelineCacheEntry(feature, engagementId) {
   const pipeline = usePipelineRuns(engagementId ?? null)
-  const forceRerun = isForceRerun()
+  const forceRerun = useForceRerun()
   const exists = pipelineFeatureExists(feature, pipeline)
   const hasCachedResults = !pipeline.isLoading && exists && !forceRerun
 
@@ -56,7 +70,7 @@ export function usePipelineCacheEntry(feature, engagementId) {
  */
 export function useMountPipelineCacheRedirect(feature, engagementId, onRedirect, options = {}) {
   const { enabled = true } = options
-  const { hasCachedResults, isLoading } = usePipelineCacheEntry(feature, engagementId)
+  const { hasCachedResults, isLoading, forceRerun } = usePipelineCacheEntry(feature, engagementId)
   const appliedRef = useRef(false)
 
   useEffect(() => {
@@ -64,10 +78,10 @@ export function useMountPipelineCacheRedirect(feature, engagementId, onRedirect,
   }, [engagementId, enabled])
 
   useEffect(() => {
-    if (!enabled || isLoading || !hasCachedResults || appliedRef.current) return
+    if (!enabled || forceRerun || isLoading || !hasCachedResults || appliedRef.current) return
     appliedRef.current = true
     onRedirect()
-  }, [engagementId, enabled, isLoading, hasCachedResults, onRedirect])
+  }, [engagementId, enabled, forceRerun, isLoading, hasCachedResults, onRedirect])
 }
 
 /**

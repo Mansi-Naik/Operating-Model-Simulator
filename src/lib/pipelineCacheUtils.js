@@ -20,6 +20,30 @@ export function isForceRerun() {
   return new URLSearchParams(window.location.search).get('forceRerun') === 'true'
 }
 
+/** @type {Set<() => void>} */
+const forceRerunListeners = new Set()
+
+/**
+ * @param {() => void} listener
+ * @returns {() => void}
+ */
+export function subscribeForceRerun(listener) {
+  forceRerunListeners.add(listener)
+  return () => {
+    forceRerunListeners.delete(listener)
+  }
+}
+
+function notifyForceRerunListeners() {
+  forceRerunListeners.forEach((listener) => {
+    try {
+      listener()
+    } catch (err) {
+      console.error('[pipelineCache] forceRerun listener error:', err)
+    }
+  })
+}
+
 /**
  * @param {boolean} enabled
  */
@@ -29,6 +53,14 @@ export function setForceRerunFlag(enabled) {
   if (enabled) url.searchParams.set('forceRerun', 'true')
   else url.searchParams.delete('forceRerun')
   window.history.replaceState({}, '', url.toString())
+  notifyForceRerunListeners()
+}
+
+/**
+ * Navigate to pre-run with forceRerun set (call from results-screen Re-run handlers).
+ */
+export function beginPipelineForceRerun() {
+  setForceRerunFlag(true)
 }
 
 /**

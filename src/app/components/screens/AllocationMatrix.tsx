@@ -1,6 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
-import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
+import {
+  useForceRerun,
+  useMountPipelineCacheRedirect,
+  usePipelineCacheEntry,
+} from '../../../hooks/usePipelineCacheEntry';
 import { isForceRerun, setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
 import { F2_0_PreRun } from './allocation/F2_0_PreRun';
 import { F2_1_Generation } from './allocation/F2_1_Generation';
@@ -25,7 +29,10 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
   const { hasCachedResults, isLoading: pipelineLoading } = usePipelineCacheEntry('f2', activeEngagementId);
   const [currentScreen, setCurrentScreen] = useState<AllocationScreen>('pre-run');
   const goToMatrixView = useCallback(() => setCurrentScreen('matrix-view'), []);
-  useMountPipelineCacheRedirect('f2', activeEngagementId, goToMatrixView);
+  const forceRerun = useForceRerun();
+  useMountPipelineCacheRedirect('f2', activeEngagementId, goToMatrixView, {
+    enabled: currentScreen === 'pre-run' && !forceRerun,
+  });
   const [showTaskDrawer, setShowTaskDrawer] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [generationInput, setGenerationInput] = useState<{
@@ -81,10 +88,11 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
     setShowTaskDrawer(true);
   };
 
-  const handleReRunToPreRun = () => {
+  const handleReRunToPreRun = useCallback(() => {
+    setForceRerunFlag(true);
     setGenerationResult(null);
     setCurrentScreen('pre-run');
-  };
+  }, []);
 
   const renderScreen = () => {
     switch (currentScreen) {
