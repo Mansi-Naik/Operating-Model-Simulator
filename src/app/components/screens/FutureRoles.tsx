@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { useEngagement } from '../../../hooks/useEngagement';
 import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
 import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
@@ -57,14 +58,27 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
     setCurrentScreen('generating');
   }, []);
 
-  const handleGenerationComplete = useCallback(async () => {
+  const handleGenerationComplete = useCallback(
+    async (result?: { failedRoles: string[]; roleNames: string[] }) => {
+      setForceGeneration(false);
+      if (activeEngagementId) {
+        await loadEngagement(activeEngagementId);
+        await refreshPipeline();
+      }
+      if (result?.failedRoles?.length) {
+        toast.warning(
+          `${result.failedRoles.length} role(s) could not be redesigned. Others are available on the grid.`,
+        );
+      }
+      setCurrentScreen('roles-grid');
+    },
+    [activeEngagementId, loadEngagement, refreshPipeline],
+  );
+
+  const handleCancelGeneration = useCallback(() => {
     setForceGeneration(false);
-    if (activeEngagementId) {
-      await loadEngagement(activeEngagementId);
-      await refreshPipeline();
-    }
-    setCurrentScreen('roles-grid');
-  }, [activeEngagementId, loadEngagement, refreshPipeline]);
+    setCurrentScreen('pre-run');
+  }, []);
 
   const handleRoleClick = (roleName: string) => {
     setSelectedRole(roleName);
@@ -128,15 +142,10 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
         return (
           <F3_1_Generation
             key={generationRunKey}
+            generationRunKey={generationRunKey}
             forceGenerate={forceGeneration}
-            onCancel={() => {
-              setForceGeneration(false);
-              setCurrentScreen('pre-run');
-            }}
-            onBack={() => {
-              setForceGeneration(false);
-              setCurrentScreen('pre-run');
-            }}
+            onCancel={handleCancelGeneration}
+            onBack={handleCancelGeneration}
             engagementId={activeEngagementId}
             onComplete={handleGenerationComplete}
           />
@@ -144,6 +153,7 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
       case 'roles-grid':
         return (
           <F3_1_RolesGrid
+            key={`roles-grid-${generationRunKey}`}
             engagementId={activeEngagementId}
             onRoleClick={handleRoleClick}
             onEmergentRoleClick={handleEmergentRoleClick}

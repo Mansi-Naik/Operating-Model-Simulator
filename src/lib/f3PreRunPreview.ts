@@ -128,7 +128,7 @@ export function computeF3PreRunPreview(
       'Emergent roles may appear — your matrix shows role hollowing (heavy automation in at least one role).';
   }
 
-  const roleNamesToRedesign = active.map((a) => String(a.role_name ?? '').trim()).filter(Boolean);
+  const roleNamesToRedesign = collectRoleNamesForF3Generation(list, engagement);
 
   return {
     patternSummary,
@@ -137,4 +137,23 @@ export function computeF3PreRunPreview(
     hasF2Predictions,
     roleNamesToRedesign,
   };
+}
+
+/**
+ * Role names to send through F3.1 redesign (one hierarchy role per entry with ≥1 assigned task).
+ */
+export function collectRoleNamesForF3Generation(
+  tasks: unknown[] | null | undefined,
+  engagement: Record<string, unknown> | null | undefined,
+): string[] {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const hierarchy = getHierarchy(engagement);
+  const aggregates = aggregateByRole(
+    list as Record<string, unknown>[],
+    hierarchy as Record<string, unknown>[],
+  );
+  return aggregates
+    .filter((a) => a.total_tasks_today > 0)
+    .map((a) => String(a.role_name ?? '').trim())
+    .filter(Boolean);
 }

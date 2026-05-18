@@ -1,40 +1,25 @@
 import { Check, Circle, Loader2, ArrowLeft } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { usePipelineCacheEntry } from '../../../../hooks/usePipelineCacheEntry';
-import { aggregateByRole } from '../../../../lib/roleAggregation';
+import { collectRoleNamesForF3Generation, tasksHaveF2Predictions } from '../../../../lib/f3PreRunPreview';
 
 interface F3_1_GenerationProps {
   onCancel: () => void;
   onBack?: () => void;
   engagementId?: string | null;
+  generationRunKey: number;
   /** When true, always run APIs even if pipeline cache still reports saved F3 (e.g. after Re-run). */
   forceGenerate?: boolean;
   onComplete?: (result: { failedRoles: string[]; roleNames: string[] }) => void;
-}
-
-function getHierarchyFromEngagement(engagement: Record<string, unknown> | null | undefined): unknown[] {
-  const intake = engagement?.intake_data;
-  if (!intake || typeof intake !== 'object' || Array.isArray(intake)) return [];
-  const h = (intake as Record<string, unknown>).hierarchy;
-  return Array.isArray(h) ? h : [];
-}
-
-function roleNamesToRedesign(
-  tasks: Record<string, unknown>[],
-  hierarchy: unknown[],
-): string[] {
-  const aggregates = aggregateByRole(tasks, hierarchy as Record<string, unknown>[]);
-  return aggregates
-    .filter((a) => a.total_tasks_today > 0)
-    .map((a) => String(a.role_name ?? '').trim())
-    .filter(Boolean);
 }
 
 export function F3_1_Generation({
   onCancel,
   onBack,
   engagementId,
+  generationRunKey,
   forceGenerate = false,
   onComplete,
 }: F3_1_GenerationProps) {
@@ -45,6 +30,10 @@ export function F3_1_Generation({
   const { hasCachedResults, isLoading: pipelineLoading } = usePipelineCacheEntry('f3', activeEngagementId);
   const cancelRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const onCancelRef = useRef(onCancel);
+  const onCompleteRef = useRef(onComplete);
+  onCancelRef.current = onCancel;
+  onCompleteRef.current = onComplete;
 
   const [totalRedesigns, setTotalRedesigns] = useState(0);
   const [completedRedesigns, setCompletedRedesigns] = useState(0);
@@ -127,16 +116,18 @@ export function F3_1_Generation({
   useEffect(() => {
     if (pipelineLoading) return;
 
+    const skipCached = hasCachedResults && !forceGenerate;
     cancelRef.current = false;
+
     const run = async () => {
       if (!activeEngagementId) {
         console.error('[F3.1] Missing engagement id');
-        onCancel();
+        onCancelRef.current();
         return;
       }
 
-      if (hasCachedResults && !forceGenerate) {
-        await onComplete?.({ failedRoles: [], roleNames: [] });
+      if (skipCached) {
+        await onCompleteRef.current?.({ failedRoles: [], roleNames: [] });
         return;
       }
 
@@ -155,8 +146,21 @@ export function F3_1_Generation({
 
       const engagement = loaded?.engagement as Record<string, unknown> | null | undefined;
       const rows = Array.isArray(loaded?.tasks) ? (loaded.tasks as Record<string, unknown>[]) : [];
-      const hierarchy = getHierarchyFromEngagement(engagement);
-      const roleNames = roleNamesToRedesign(rows, hierarchy);
+
+      if (!tasksHaveF2Predictions(rows)) {
+        toast.error('Complete the allocation matrix (F2) before generating roles.');
+        onCancelRef.current();
+        return;
+      }
+
+      const roleNames = collectRoleNamesForF3Generation(rows, engagement);
+      if (roleNames.length === 0) {
+        toast.error('No roles with assigned tasks found. Check intake hierarchy and F2 allocations.');
+        onCancelRef.current();
+        return;
+      }
+
+      console.log('[F3.1] Queued roles for redesign:', roleNames);
 
       setTotalRedesigns(roleNames.length);
       setAggregateDone(true);
@@ -234,7 +238,14 @@ export function F3_1_Generation({
       if (cancelRef.current) return;
 
       setFinalizeDone(true);
-      onComplete?.({ failedRoles, roleNames });
+
+      if (failedRoles.length > 0) {
+        toast.warning(
+          `${failedRoles.length} role(s) could not be redesigned: ${failedRoles.join(', ')}. Check the browser console for details.`,
+        );
+      }
+
+      onCompleteRef.current?.({ failedRoles, roleNames });
     };
 
     void run();
@@ -243,12 +254,12 @@ export function F3_1_Generation({
       cancelRef.current = true;
       abortRef.current?.abort();
     };
-  }, [activeEngagementId, loadEngagement, onCancel, onComplete, pipelineLoading, hasCachedResults, forceGenerate]);
+  }, [activeEngagementId, generationRunKey, forceGenerate, pipelineLoading]);
 
   const handleCancel = () => {
     cancelRef.current = true;
     abortRef.current?.abort();
-    onCancel();
+    onCancelRef.current();
   };
 
   const emergentPhaseActive =
