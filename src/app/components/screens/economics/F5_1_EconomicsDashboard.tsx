@@ -2,7 +2,6 @@ import { Settings, ArrowRight, TrendingUp, Check, Sparkles, Info } from 'lucide-
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { setForceRerunFlag } from '../../../../lib/pipelineCacheUtils';
-import { useForceRerun } from '../../../../hooks/usePipelineCacheEntry';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { normalizeF3Roles } from '../../../../lib/f3RolesStorage';
 import { runFullEconomics } from '../../../../lib/economicsEngine';
@@ -228,7 +227,22 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
   const [sensitivityNarrative, setSensitivityNarrative] = useState('Generating analysis...');
   const [narrativePending, setNarrativePending] = useState(false);
   const [reRunNonce, setReRunNonce] = useState(0);
-  const forceRerun = useForceRerun();
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const forceRerunFromUrl = urlParams.get('forceRerun') === 'true';
+
+    console.log('[F5 Prerun] useEffect triggered', {
+      forceRerun: forceRerunFromUrl,
+      hasSavedEconomics,
+      url: window.location.href,
+      search: window.location.search,
+    });
+
+    if (forceRerunFromUrl) {
+      console.log('[F5 Prerun] forceRerun is true, staying on pre-run screen');
+    }
+  }, [hasSavedEconomics]);
 
   const loadPipeline = useCallback(async () => {
     if (!engagementIdFromUrl) {
@@ -260,13 +274,14 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
     setAssumptionsUsed(asObj(savedEconomics.assumptions_used));
     const hasSaved = Boolean(savedEconomics.economics_result);
     setHasSavedEconomics(hasSaved);
-    if (hasSaved && !forceRerun) {
+    const forceRerunFromUrl = new URLSearchParams(window.location.search).get('forceRerun') === 'true';
+    if (hasSaved && !forceRerunFromUrl) {
       setSavedEconomicsSnapshot(asObj(savedEconomics.economics_result));
     } else {
       setSavedEconomicsSnapshot(null);
     }
     setPipelineLoading(false);
-  }, [engagementIdFromUrl, refreshKey, forceRerun]);
+  }, [engagementIdFromUrl, refreshKey]);
 
   useEffect(() => {
     void loadPipeline();
@@ -302,11 +317,14 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
   }, [engagement, tasks, selectedVariant, f3Roles, preferences]);
 
   const displayEconomics = useMemo(() => {
-    if (savedEconomicsSnapshot && hasSavedEconomics && !forceRerun) {
+    const forceRerunFromUrl =
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('forceRerun') === 'true';
+    if (savedEconomicsSnapshot && hasSavedEconomics && !forceRerunFromUrl) {
       return savedEconomicsSnapshot;
     }
     return economicsResult;
-  }, [savedEconomicsSnapshot, hasSavedEconomics, economicsResult, forceRerun]);
+  }, [savedEconomicsSnapshot, hasSavedEconomics, economicsResult]);
 
   const handleConfirmReRun = useCallback(() => {
     setForceRerunFlag(true);

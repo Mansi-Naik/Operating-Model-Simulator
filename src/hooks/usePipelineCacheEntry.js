@@ -48,7 +48,7 @@ export function usePipelineCacheEntry(feature, engagementId) {
   const pipeline = usePipelineRuns(engagementId ?? null)
   const forceRerun = useForceRerun()
   const exists = pipelineFeatureExists(feature, pipeline)
-  const hasCachedResults = !pipeline.isLoading && exists && !forceRerun
+  const hasCachedResults = !pipeline.isLoading && exists && !isForceRerun()
 
   return {
     pipeline,
@@ -70,7 +70,7 @@ export function usePipelineCacheEntry(feature, engagementId) {
  */
 export function useMountPipelineCacheRedirect(feature, engagementId, onRedirect, options = {}) {
   const { enabled = true } = options
-  const { hasCachedResults, isLoading, forceRerun } = usePipelineCacheEntry(feature, engagementId)
+  const { hasCachedResults, isLoading } = usePipelineCacheEntry(feature, engagementId)
   const appliedRef = useRef(false)
 
   useEffect(() => {
@@ -78,10 +78,11 @@ export function useMountPipelineCacheRedirect(feature, engagementId, onRedirect,
   }, [engagementId, enabled])
 
   useEffect(() => {
+    const forceRerun = isForceRerun()
     if (!enabled || forceRerun || isLoading || !hasCachedResults || appliedRef.current) return
     appliedRef.current = true
     onRedirect()
-  }, [engagementId, enabled, forceRerun, isLoading, hasCachedResults, onRedirect])
+  }, [engagementId, enabled, isLoading, hasCachedResults, onRedirect])
 }
 
 /**

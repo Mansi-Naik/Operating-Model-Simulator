@@ -114,6 +114,21 @@ export function F4_0_PreRun({ onGeneratePodVariants, onBack, onGoToF3 }: F4_0_Pr
     void loadF3Pipeline();
   }, [loadF3Pipeline]);
 
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const forceRerun = urlParams.get('forceRerun') === 'true';
+
+    console.log('[F4 Prerun] useEffect triggered', {
+      forceRerun,
+      url: window.location.href,
+      search: window.location.search,
+    });
+
+    if (forceRerun) {
+      console.log('[F4 Prerun] forceRerun is true, staying on pre-run screen');
+    }
+  }, []);
+
   const engagementRecord = engagement as Record<string, unknown> | null;
   const taskRows = useMemo(() => (Array.isArray(tasks) ? (tasks as Record<string, unknown>[]) : []), [tasks]);
 

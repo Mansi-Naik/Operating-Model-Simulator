@@ -1,4 +1,5 @@
 import { Sparkles, Clock, ArrowLeft, AlertTriangle } from 'lucide-react';
+import { useEffect } from 'react';
 
 export interface F3_0_PreRunPreviewRow {
   color: string;
@@ -28,6 +29,21 @@ export function F3_0_PreRun({
   previewRows = [],
   emergentHint,
 }: F3_0_PreRunProps) {
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const forceRerun = urlParams.get('forceRerun') === 'true';
+
+    console.log('[F3 Prerun] useEffect triggered', {
+      forceRerun,
+      url: window.location.href,
+      search: window.location.search,
+    });
+
+    if (forceRerun) {
+      console.log('[F3 Prerun] forceRerun is true, staying on pre-run screen');
+    }
+  }, []);
+
   const canGenerate = !needsF2Banner && !loading && !error;
 
   return (
