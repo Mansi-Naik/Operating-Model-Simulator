@@ -10,7 +10,7 @@ interface F6_1_C_GanttViewProps {
   onProceedToF7?: () => void;
   onMissingTimeline?: () => void;
   onGoToF3?: () => void;
-  onReRunToPreRun?: () => void;
+  onReRunToPreRun?: () => void | Promise<void>;
 }
 
 type TimelineNode = Record<string, unknown>;
@@ -261,7 +261,7 @@ export function F6_1_C_GanttView({
           Back to timeline
         </button>
         <div className="flex items-center gap-2">
-          {onReRunToPreRun ? <PipelineReRunButton onConfirmRerun={onReRunToPreRun} /> : null}
+          {onReRunToPreRun ? <PipelineReRunButton feature="f6" onConfirmRerun={onReRunToPreRun} /> : null}
           <button
             type="button"
             onClick={() => setShowCriticalPath((value) => !value)}

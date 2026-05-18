@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { dedupeLatestRedesignsByRole, normalizeF3Roles } from '../lib/f3RolesStorage.js'
-import { hasMeaningfulJson, tasksFullyAllocated, tasksHaveF2Allocations } from '../lib/pipelineCacheUtils.js'
+import {
+  hasMeaningfulJson,
+  tasksFullyAllocated,
+  tasksHaveAiAllocations,
+  tasksHaveF2Allocations,
+} from '../lib/pipelineCacheUtils.js'
 import { supabase } from '../supabaseClient.js'
 
 /**
@@ -134,7 +139,7 @@ export function usePipelineRuns(engagementId) {
       const tasks = Array.isArray(tasksRes.data) ? tasksRes.data : []
 
       const f2FromMatrix = hasMeaningfulJson(row?.f2_matrix) ? asObj(row.f2_matrix) : null
-      const f2FromTasks = tasksHaveF2Allocations(tasks)
+      const f2FromTasks = tasksHaveAiAllocations(tasks)
       const f2_exists = f2FromMatrix != null || f2FromTasks
       const f2_complete = f2FromMatrix != null || tasksFullyAllocated(tasks)
       /** @type {Record<string, unknown> | null} */

@@ -11,7 +11,7 @@ interface F4_2_OrgRollupProps {
   onProceedToF5?: () => void;
   /** When F4 selection is missing or invalid — return user to F4.1 */
   onRedirectToVariants?: () => void;
-  onReRunToPreRun?: () => void;
+  onReRunToPreRun?: () => void | Promise<void>;
 }
 
 function parseF4Pods(raw: unknown): Record<string, unknown> | null {
@@ -290,7 +290,7 @@ export function F4_2_OrgRollup({ onBack, onShowMath, onProceedToF5, onRedirectTo
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {onReRunToPreRun ? <PipelineReRunButton onConfirmRerun={onReRunToPreRun} /> : null}
+          {onReRunToPreRun ? <PipelineReRunButton feature="f4" onConfirmRerun={onReRunToPreRun} /> : null}
           <button
             type="button"
             onClick={onShowMath}

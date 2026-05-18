@@ -21,7 +21,7 @@ interface Task {
 
 interface F2_2_MatrixViewProps {
   onTaskClick: (taskId: string) => void;
-  onReRun: () => void;
+  onReRun: () => void | Promise<void>;
   onBack?: () => void;
   onProceedToF3?: () => void;
   engagementId?: string | null;
@@ -254,7 +254,7 @@ export function F2_2_MatrixView({
       <div className="flex items-center justify-between mb-4">
         <div className="text-[13px] text-[#161916]">ALLOCATION MATRIX</div>
         <div className="flex items-center gap-2">
-          <PipelineReRunButton onConfirmRerun={onReRun} />
+          <PipelineReRunButton feature="f2" onConfirmRerun={onReRun} />
           <button className="h-9 px-3 border border-[#494949]/30 text-[#494949] rounded-md hover:bg-[#494949]/5">
             <Settings className="w-4 h-4" />
           </button>

@@ -81,7 +81,6 @@ export default function App() {
   const handleClientSwitch = (engagementId: string) => {
     const url = new URL(window.location.href);
     url.searchParams.set('engagementId', engagementId);
-    url.searchParams.delete('forceRerun');
     window.history.pushState({}, '', url.toString());
     setActiveEngagementId(engagementId);
     setCurrentFeature('f1');

@@ -1,20 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { isForceRerun, subscribeForceRerun } from '../lib/pipelineCacheUtils.js'
+import { useCallback, useEffect, useRef } from 'react'
 import { usePipelineRuns } from './usePipelineRuns.js'
-
-/**
- * URL `forceRerun` flag mirrored into React state so updates re-render cache hooks.
- */
-export function useForceRerun() {
-  const [forceRerun, setForceRerun] = useState(() => isForceRerun())
-
-  useEffect(() => {
-    setForceRerun(isForceRerun())
-    return subscribeForceRerun(() => setForceRerun(isForceRerun()))
-  }, [])
-
-  return forceRerun
-}
 
 /** @typedef {'f2' | 'f3' | 'f4' | 'f5' | 'f6'} PipelineFeature */
 
@@ -26,7 +11,7 @@ export function useForceRerun() {
 export function pipelineFeatureExists(feature, pipeline) {
   switch (feature) {
     case 'f2':
-      return pipeline.f2_complete
+      return pipeline.f2_exists
     case 'f3':
       return pipeline.f3_exists
     case 'f4':
@@ -46,16 +31,15 @@ export function pipelineFeatureExists(feature, pipeline) {
  */
 export function usePipelineCacheEntry(feature, engagementId) {
   const pipeline = usePipelineRuns(engagementId ?? null)
-  const forceRerun = useForceRerun()
   const exists = pipelineFeatureExists(feature, pipeline)
-  const hasCachedResults = !pipeline.isLoading && exists && !isForceRerun()
+  const hasCachedResults = !pipeline.isLoading && exists
 
   return {
     pipeline,
-    forceRerun,
     exists,
     hasCachedResults,
     isLoading: pipeline.isLoading,
+    refresh: pipeline.refresh,
   }
 }
 
@@ -78,8 +62,7 @@ export function useMountPipelineCacheRedirect(feature, engagementId, onRedirect,
   }, [engagementId, enabled])
 
   useEffect(() => {
-    const forceRerun = isForceRerun()
-    if (!enabled || forceRerun || isLoading || !hasCachedResults || appliedRef.current) return
+    if (!enabled || isLoading || !hasCachedResults || appliedRef.current) return
     appliedRef.current = true
     onRedirect()
   }, [engagementId, enabled, isLoading, hasCachedResults, onRedirect])
@@ -91,6 +74,6 @@ export function useMountPipelineCacheRedirect(feature, engagementId, onRedirect,
  * @returns {() => boolean}
  */
 export function useShouldBlockGeneration(feature, engagementId) {
-  const { exists, forceRerun, isLoading } = usePipelineCacheEntry(feature, engagementId)
-  return useCallback(() => !isLoading && exists && !forceRerun, [exists, forceRerun, isLoading])
+  const { exists, isLoading } = usePipelineCacheEntry(feature, engagementId)
+  return useCallback(() => !isLoading && exists, [exists, isLoading])
 }

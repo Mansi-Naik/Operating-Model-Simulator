@@ -1,7 +1,6 @@
 import { Loader2 } from 'lucide-react';
 import { useEffect, type ReactNode } from 'react';
 import { usePipelineCacheEntry } from '../../hooks/usePipelineCacheEntry';
-import { isForceRerun } from '../../lib/pipelineCacheUtils';
 
 type PipelineFeature = 'f2' | 'f3' | 'f4' | 'f5' | 'f6';
 
@@ -21,6 +20,7 @@ export function PipelineCacheLoading() {
   );
 }
 
+
 export function PipelinePreRunGate({
   feature,
   engagementId,
@@ -28,33 +28,13 @@ export function PipelinePreRunGate({
   children,
 }: PipelinePreRunGateProps) {
   const { exists, isLoading } = usePipelineCacheEntry(feature, engagementId);
-  const featureLabel = feature.toUpperCase();
 
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const forceRerun = urlParams.get('forceRerun') === 'true';
-
-    console.log(`[${featureLabel} Prerun] useEffect triggered`, {
-      forceRerun,
-      exists,
-      isLoading,
-      url: window.location.href,
-      search: window.location.search,
-    });
-
     if (isLoading) return;
-
-    if (forceRerun) {
-      console.log(`[${featureLabel} Prerun] forceRerun is true, staying on pre-run screen`);
-      return;
-    }
-
     if (exists) onSkipToResults();
-  }, [isLoading, exists, onSkipToResults, featureLabel]);
+  }, [isLoading, exists, onSkipToResults]);
 
-  const forceRerunFromUrl = isForceRerun();
-
-  if (isLoading || (!forceRerunFromUrl && exists)) {
+  if (isLoading || exists) {
     return <PipelineCacheLoading />;
   }
 

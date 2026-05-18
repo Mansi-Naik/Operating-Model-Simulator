@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useEngagement } from '../../../hooks/useEngagement';
-import {
-  useForceRerun,
-  useMountPipelineCacheRedirect,
-  usePipelineCacheEntry,
-} from '../../../hooks/usePipelineCacheEntry';
+import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
 import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
-import { isForceRerun, setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
+import { clearF3SavedState } from '../../../lib/pipelineRerunClear';
 import { computeF3PreRunPreview } from '../../../lib/f3PreRunPreview';
 import { F3_0_PreRun } from './roles/F3_0_PreRun';
 import { F3_1_Generation } from './roles/F3_1_Generation';
@@ -29,13 +25,15 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
   const activeEngagementId = engagementIdProp ?? engagementIdFromUrl;
 
   const { engagement, tasks, loading, error, loadEngagement } = useEngagement(activeEngagementId);
-  const { hasCachedResults, isLoading: pipelineLoading } = usePipelineCacheEntry('f3', activeEngagementId);
+  const { hasCachedResults, isLoading: pipelineLoading, refresh: refreshPipeline } = usePipelineCacheEntry(
+    'f3',
+    activeEngagementId,
+  );
 
   const [currentScreen, setCurrentScreen] = useState<RolesScreen>('pre-run');
   const goToRolesGrid = useCallback(() => setCurrentScreen('roles-grid'), []);
-  const forceRerun = useForceRerun();
   useMountPipelineCacheRedirect('f3', activeEngagementId, goToRolesGrid, {
-    enabled: currentScreen === 'pre-run' && !forceRerun,
+    enabled: currentScreen === 'pre-run',
   });
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [selectedEmergentRole, setSelectedEmergentRole] = useState<string | null>(null);
@@ -52,16 +50,14 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
   );
 
   const handleGenerate = useCallback(() => {
-    if (!isForceRerun() && hasCachedResults) {
+    if (hasCachedResults) {
       setCurrentScreen('roles-grid');
       return;
     }
-    setForceRerunFlag(false);
     setCurrentScreen('generating');
   }, [hasCachedResults]);
 
   const handleGenerationComplete = useCallback(() => {
-    setForceRerunFlag(false);
     if (activeEngagementId) {
       void loadEngagement(activeEngagementId);
     }
@@ -83,10 +79,15 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
     setCurrentScreen('emergent-role-detail');
   };
 
-  const handleReRunToPreRun = useCallback(() => {
-    setForceRerunFlag(true);
+  const handleReRunToPreRun = useCallback(async () => {
+    if (!activeEngagementId) {
+      throw new Error('Missing engagement');
+    }
+    await clearF3SavedState(activeEngagementId);
+    await loadEngagement(activeEngagementId);
+    await refreshPipeline();
     setCurrentScreen('pre-run');
-  }, []);
+  }, [activeEngagementId, loadEngagement, refreshPipeline]);
 
   const handleBackToGrid = () => {
     if (typeof window !== 'undefined') {
@@ -158,11 +159,7 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
     }
   };
 
-  if (
-    !isForceRerun() &&
-    pipelineLoading &&
-    (currentScreen === 'pre-run' || currentScreen === 'generating')
-  ) {
+  if (pipelineLoading && (currentScreen === 'pre-run' || currentScreen === 'generating')) {
     return <PipelineCacheLoading />;
   }
 

@@ -37,7 +37,7 @@ interface F3_1_RolesGridProps {
   engagementId?: string | null;
   onRoleClick: (roleName: string) => void;
   onEmergentRoleClick: (roleName: string) => void;
-  onReRun: () => void;
+  onReRun: () => void | Promise<void>;
   onBack?: () => void;
   onProceedToF4?: () => void;
 }
@@ -309,7 +309,7 @@ export function F3_1_RolesGrid({
       <div className="flex items-center justify-between mb-4">
         <div className="text-[13px] text-[#161916]">ROLES</div>
         <div className="flex items-center gap-2">
-          <PipelineReRunButton onConfirmRerun={onReRun} />
+          <PipelineReRunButton feature="f3" onConfirmRerun={onReRun} />
           <button className="h-9 px-3 border border-[#494949]/30 text-[#494949] rounded-md hover:bg-[#494949]/5">
             <Settings className="w-4 h-4" />
           </button>

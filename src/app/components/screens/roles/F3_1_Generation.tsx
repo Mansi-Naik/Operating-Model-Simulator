@@ -2,7 +2,6 @@ import { Check, Circle, Loader2, ArrowLeft } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { usePipelineCacheEntry } from '../../../../hooks/usePipelineCacheEntry';
-import { isForceRerun } from '../../../../lib/pipelineCacheUtils';
 import { aggregateByRole } from '../../../../lib/roleAggregation';
 
 interface F3_1_GenerationProps {
@@ -128,7 +127,7 @@ export function F3_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
         return;
       }
 
-      if (!isForceRerun() && hasCachedResults) {
+      if (hasCachedResults) {
         await onComplete?.({ failedRoles: [], roleNames: [] });
         return;
       }

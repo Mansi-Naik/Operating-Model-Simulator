@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
 import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
-import { isForceRerun, setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
+import { clearF6SavedState } from '../../../lib/pipelineRerunClear';
 import { F6_0_PreRun } from './timeline/F6_0_PreRun';
 import { F6_1_ImplementationTimeline } from './timeline/F6_1_ImplementationTimeline';
 import { F6_1_B_DependenciesView } from './timeline/F6_1_B_DependenciesView';
@@ -25,14 +25,17 @@ export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3, initialScr
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
   const activeEngagementId = engagementId ?? engagementIdFromUrl;
-  const { hasCachedResults, isLoading: pipelineLoading } = usePipelineCacheEntry('f6', activeEngagementId);
+  const { hasCachedResults, isLoading: pipelineLoading, refresh: refreshPipeline } = usePipelineCacheEntry(
+    'f6',
+    activeEngagementId,
+  );
 
   const [currentScreen, setCurrentScreen] = useState<TimelineScreen>(initialScreen ?? 'pre-run');
   const goToGantt = useCallback(() => {
     if (!initialScreen) setCurrentScreen('gantt');
   }, [initialScreen]);
   useMountPipelineCacheRedirect('f6', activeEngagementId, goToGantt, {
-    enabled: !initialScreen,
+    enabled: !initialScreen && currentScreen === 'pre-run',
   });
 
   useEffect(() => {
@@ -40,13 +43,21 @@ export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3, initialScr
   }, [initialScreen]);
 
   const handleGenerateTimeline = () => {
-    if (!isForceRerun() && hasCachedResults) {
+    if (hasCachedResults) {
       setCurrentScreen('gantt');
       return;
     }
-    setForceRerunFlag(false);
     setCurrentScreen('loading');
   };
+
+  const handleReRunToPreRun = useCallback(async () => {
+    if (!activeEngagementId) {
+      throw new Error('Missing engagement');
+    }
+    await clearF6SavedState(activeEngagementId);
+    await refreshPipeline();
+    setCurrentScreen('pre-run');
+  }, [activeEngagementId, refreshPipeline]);
 
   const renderScreen = () => {
     switch (currentScreen) {
@@ -68,7 +79,6 @@ export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3, initialScr
         return (
           <F6_1_TimelineGeneration
             onComplete={() => {
-              setForceRerunFlag(false);
               setCurrentScreen('gantt');
             }}
             onCancel={() => setCurrentScreen('pre-run')}
@@ -91,7 +101,7 @@ export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3, initialScr
             onProceedToF7={onProceedToF7}
             onMissingTimeline={() => setCurrentScreen('pre-run')}
             onGoToF3={onGoToF3}
-            onReRunToPreRun={() => setCurrentScreen('pre-run')}
+            onReRunToPreRun={handleReRunToPreRun}
           />
         );
       case 'dependencies':
@@ -109,7 +119,6 @@ export function Timeline({ onBack, onProceedToF7, onGoToF5, onGoToF3, initialScr
 
   if (
     !initialScreen &&
-    !isForceRerun() &&
     pipelineLoading &&
     (currentScreen === 'pre-run' || currentScreen === 'loading')
   ) {

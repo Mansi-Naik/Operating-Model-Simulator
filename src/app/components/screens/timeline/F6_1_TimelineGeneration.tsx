@@ -2,7 +2,6 @@ import { ArrowLeft, Check, Circle, Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { usePipelineCacheEntry } from '../../../../hooks/usePipelineCacheEntry';
-import { isForceRerun } from '../../../../lib/pipelineCacheUtils';
 import { CAPABILITY_LIBRARY } from '../../../../lib/capabilityLibrary';
 import {
   buildDependencyGraph,
@@ -168,7 +167,7 @@ export function F6_1_TimelineGeneration({ onComplete, onCancel, onBack }: F6_1_T
       try {
         if (!engagementIdFromUrl) throw new Error('Missing engagement id');
 
-        if (!isForceRerun() && hasCachedResults) {
+        if (hasCachedResults) {
           if (!cancelledRef.current && runIdRef.current === runId) onComplete();
           return;
         }

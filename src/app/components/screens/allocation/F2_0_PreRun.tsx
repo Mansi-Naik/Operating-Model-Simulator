@@ -1,5 +1,5 @@
 import { Sparkles, Clock, ArrowLeft } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 interface F2_0_PreRunProps {
   onGenerate: (appetite: string) => void | Promise<void>;
@@ -25,21 +25,6 @@ export function F2_0_PreRun({
   readinessBand,
   initialAutomationAppetite,
 }: F2_0_PreRunProps) {
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const forceRerun = urlParams.get('forceRerun') === 'true';
-
-    console.log('[F2 Prerun] useEffect triggered', {
-      forceRerun,
-      url: window.location.href,
-      search: window.location.search,
-    });
-
-    if (forceRerun) {
-      console.log('[F2 Prerun] forceRerun is true, staying on pre-run screen');
-    }
-  }, []);
-
   const [isGenerating, setIsGenerating] = useState(false);
   const [appetite, setAppetite] = useState<'Conservative' | 'Balanced' | 'Aggressive'>(
     toDisplayAppetite(initialAutomationAppetite),

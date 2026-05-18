@@ -18,7 +18,7 @@ interface F4_1_VariantSelectorProps {
   onViewOrgRollup: () => void;
   onShowMath: () => void;
   message?: string | null;
-  onReRunToPreRun?: () => void;
+  onReRunToPreRun?: () => void | Promise<void>;
 }
 
 function variantKeyToRiskChip(key: string): RiskChip {
@@ -332,7 +332,7 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, message, onR
       <div className="flex items-center justify-between mb-6">
         <div className="text-[13px] text-[#161916]">PODS</div>
         <div className="flex items-center gap-2">
-          {onReRunToPreRun ? <PipelineReRunButton onConfirmRerun={onReRunToPreRun} /> : null}
+          {onReRunToPreRun ? <PipelineReRunButton feature="f4" onConfirmRerun={onReRunToPreRun} /> : null}
           <button
             type="button"
             className="h-9 px-3 border border-[#494949]/30 text-[#494949] rounded-md hover:bg-[#494949]/5"

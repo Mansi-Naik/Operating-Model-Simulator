@@ -13,57 +13,6 @@ export function hasMeaningfulJson(value) {
 }
 
 /**
- * @returns {boolean}
- */
-export function isForceRerun() {
-  if (typeof window === 'undefined') return false
-  return new URLSearchParams(window.location.search).get('forceRerun') === 'true'
-}
-
-/** @type {Set<() => void>} */
-const forceRerunListeners = new Set()
-
-/**
- * @param {() => void} listener
- * @returns {() => void}
- */
-export function subscribeForceRerun(listener) {
-  forceRerunListeners.add(listener)
-  return () => {
-    forceRerunListeners.delete(listener)
-  }
-}
-
-function notifyForceRerunListeners() {
-  forceRerunListeners.forEach((listener) => {
-    try {
-      listener()
-    } catch (err) {
-      console.error('[pipelineCache] forceRerun listener error:', err)
-    }
-  })
-}
-
-/**
- * @param {boolean} enabled
- */
-export function setForceRerunFlag(enabled) {
-  if (typeof window === 'undefined') return
-  const url = new URL(window.location.href)
-  if (enabled) url.searchParams.set('forceRerun', 'true')
-  else url.searchParams.delete('forceRerun')
-  window.history.replaceState({}, '', url.toString())
-  notifyForceRerunListeners()
-}
-
-/**
- * Navigate to pre-run with forceRerun set (call from results-screen Re-run handlers).
- */
-export function beginPipelineForceRerun() {
-  setForceRerunFlag(true)
-}
-
-/**
  * @param {Record<string, unknown> | null | undefined} task
  * @returns {string}
  */
@@ -100,6 +49,20 @@ export function pickF2TaskFields(task) {
     if (task[key] != null && task[key] !== '') out[key] = task[key]
   }
   return out
+}
+
+/**
+ * True when any task has a saved AI allocation (ignores user overrides).
+ *
+ * @param {Record<string, unknown>[]} tasks
+ * @returns {boolean}
+ */
+export function tasksHaveAiAllocations(tasks) {
+  if (!Array.isArray(tasks) || tasks.length === 0) return false
+  return tasks.some((t) => {
+    const ai = t?.ai_allocation
+    return ai != null && String(ai).trim().length > 0
+  })
 }
 
 /**

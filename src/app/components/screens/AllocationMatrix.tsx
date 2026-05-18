@@ -1,11 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
-import {
-  useForceRerun,
-  useMountPipelineCacheRedirect,
-  usePipelineCacheEntry,
-} from '../../../hooks/usePipelineCacheEntry';
-import { isForceRerun, setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
+import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
+import { clearF2SavedState } from '../../../lib/pipelineRerunClear';
 import { F2_0_PreRun } from './allocation/F2_0_PreRun';
 import { F2_1_Generation } from './allocation/F2_1_Generation';
 import { F2_2_MatrixView } from './allocation/F2_2_MatrixView';
@@ -26,12 +22,14 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
   const activeEngagementId = engagementIdProp ?? engagementIdFromUrl;
   const { engagement, tasks, loadEngagement } = useEngagement(activeEngagementId);
-  const { hasCachedResults, isLoading: pipelineLoading } = usePipelineCacheEntry('f2', activeEngagementId);
+  const { hasCachedResults, isLoading: pipelineLoading, refresh: refreshPipeline } = usePipelineCacheEntry(
+    'f2',
+    activeEngagementId,
+  );
   const [currentScreen, setCurrentScreen] = useState<AllocationScreen>('pre-run');
   const goToMatrixView = useCallback(() => setCurrentScreen('matrix-view'), []);
-  const forceRerun = useForceRerun();
   useMountPipelineCacheRedirect('f2', activeEngagementId, goToMatrixView, {
-    enabled: currentScreen === 'pre-run' && !forceRerun,
+    enabled: currentScreen === 'pre-run',
   });
   const [showTaskDrawer, setShowTaskDrawer] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -65,11 +63,11 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
   }, [engagement?.intake_data]);
 
   const handleGenerate = (appetite: string) => {
-    if (!isForceRerun() && hasCachedResults) {
+    void appetite;
+    if (hasCachedResults) {
       setCurrentScreen('matrix-view');
       return;
     }
-    setForceRerunFlag(false);
     const sourceTasks = Array.isArray(tasks) ? tasks : [];
     setGenerationInput({
       engagementId: activeEngagementId,
@@ -88,11 +86,16 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
     setShowTaskDrawer(true);
   };
 
-  const handleReRunToPreRun = useCallback(() => {
-    setForceRerunFlag(true);
+  const handleReRunToPreRun = useCallback(async () => {
+    if (!activeEngagementId) {
+      throw new Error('Missing engagement');
+    }
+    await clearF2SavedState(activeEngagementId);
+    await loadEngagement(activeEngagementId);
+    await refreshPipeline();
     setGenerationResult(null);
     setCurrentScreen('pre-run');
-  }, []);
+  }, [activeEngagementId, loadEngagement, refreshPipeline]);
 
   const renderScreen = () => {
     switch (currentScreen) {
@@ -120,7 +123,6 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
             onBack={() => setCurrentScreen('pre-run')}
             engagementId={generationInput.engagementId}
             onComplete={async (result) => {
-              setForceRerunFlag(false);
               setGenerationResult(result);
               let loadedTasks: Record<string, unknown>[] = [];
               if (generationInput.engagementId) {
@@ -154,11 +156,7 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
     }
   };
 
-  if (
-    !isForceRerun() &&
-    pipelineLoading &&
-    (currentScreen === 'pre-run' || currentScreen === 'generating')
-  ) {
+  if (pipelineLoading && (currentScreen === 'pre-run' || currentScreen === 'generating')) {
     return <PipelineCacheLoading />;
   }
 
@@ -178,7 +176,6 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
             if (drawerEngagementId) {
               await loadEngagement(drawerEngagementId);
             }
-            // Engagement F3–F7 refresh flag: set via engagements.status or stale marker (follow-up).
           }}
         />
       )}

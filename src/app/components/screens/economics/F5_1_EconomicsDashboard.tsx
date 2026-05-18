@@ -1,7 +1,6 @@
 import { Settings, ArrowRight, TrendingUp, Check, Sparkles, Info } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PipelineReRunButton } from '../../PipelineReRunButton';
-import { setForceRerunFlag } from '../../../../lib/pipelineCacheUtils';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { normalizeF3Roles } from '../../../../lib/f3RolesStorage';
 import { runFullEconomics } from '../../../../lib/economicsEngine';
@@ -12,6 +11,7 @@ interface F5_1_EconomicsDashboardProps {
   onBack?: () => void;
   onProceedToF6?: () => void;
   onMissingF4Selection?: () => void;
+  onReRun?: () => void | Promise<void>;
   refreshKey?: number;
 }
 
@@ -207,7 +207,14 @@ function SavingsCurveChart({ curve, paybackMonth }: { curve: Record<string, unkn
   );
 }
 
-export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedToF6, onMissingF4Selection, refreshKey = 0 }: F5_1_EconomicsDashboardProps) {
+export function F5_1_EconomicsDashboard({
+  onEditAssumptions,
+  onBack,
+  onProceedToF6,
+  onMissingF4Selection,
+  onReRun,
+  refreshKey = 0,
+}: F5_1_EconomicsDashboardProps) {
   void onBack;
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
@@ -226,24 +233,6 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
   );
   const [sensitivityNarrative, setSensitivityNarrative] = useState('Generating analysis...');
   const [narrativePending, setNarrativePending] = useState(false);
-  const [reRunNonce, setReRunNonce] = useState(0);
-
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const forceRerunFromUrl = urlParams.get('forceRerun') === 'true';
-
-    console.log('[F5 Prerun] useEffect triggered', {
-      forceRerun: forceRerunFromUrl,
-      hasSavedEconomics,
-      url: window.location.href,
-      search: window.location.search,
-    });
-
-    if (forceRerunFromUrl) {
-      console.log('[F5 Prerun] forceRerun is true, staying on pre-run screen');
-    }
-  }, [hasSavedEconomics]);
-
   const loadPipeline = useCallback(async () => {
     if (!engagementIdFromUrl) {
       setPipelineError('Missing engagement');
@@ -274,8 +263,7 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
     setAssumptionsUsed(asObj(savedEconomics.assumptions_used));
     const hasSaved = Boolean(savedEconomics.economics_result);
     setHasSavedEconomics(hasSaved);
-    const forceRerunFromUrl = new URLSearchParams(window.location.search).get('forceRerun') === 'true';
-    if (hasSaved && !forceRerunFromUrl) {
+    if (hasSaved) {
       setSavedEconomicsSnapshot(asObj(savedEconomics.economics_result));
     } else {
       setSavedEconomicsSnapshot(null);
@@ -317,34 +305,22 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
   }, [engagement, tasks, selectedVariant, f3Roles, preferences]);
 
   const displayEconomics = useMemo(() => {
-    const forceRerunFromUrl =
-      typeof window !== 'undefined' &&
-      new URLSearchParams(window.location.search).get('forceRerun') === 'true';
-    if (savedEconomicsSnapshot && hasSavedEconomics && !forceRerunFromUrl) {
+    if (savedEconomicsSnapshot && hasSavedEconomics) {
       return savedEconomicsSnapshot;
     }
     return economicsResult;
   }, [savedEconomicsSnapshot, hasSavedEconomics, economicsResult]);
 
-  const handleConfirmReRun = useCallback(() => {
-    setForceRerunFlag(true);
-    setSavedEconomicsSnapshot(null);
-    setHasSavedEconomics(false);
-    setReRunNonce((n) => n + 1);
-    if (engagementIdFromUrl) void loadEngagement(engagementIdFromUrl);
-    void loadPipeline();
-  }, [engagementIdFromUrl, loadEngagement, loadPipeline]);
-
   const economicsSignature = useMemo(
     () =>
       economicsResult
-        ? JSON.stringify({ reRunNonce, selectedVariantName, assumptionsUsed, economicsResult })
+        ? JSON.stringify({ selectedVariantName, assumptionsUsed, economicsResult })
         : '',
-    [economicsResult, reRunNonce, selectedVariantName, assumptionsUsed],
+    [economicsResult, selectedVariantName, assumptionsUsed],
   );
   const sensitivitySignature = useMemo(
-    () => (economicsResult ? JSON.stringify({ reRunNonce, sensitivity: economicsResult.sensitivity ?? {} }) : ''),
-    [economicsResult, reRunNonce],
+    () => (economicsResult ? JSON.stringify(economicsResult.sensitivity ?? {}) : ''),
+    [economicsResult],
   );
 
   useEffect(() => {
@@ -451,7 +427,7 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
       <div className="p-10 max-w-[1204px] mx-auto">
         <div className="text-[13px] text-[#161916] mb-6">ECONOMICS</div>
         <div className="mb-6 text-[14px] text-[#FD4E59] border border-[#FD4E59]/30 rounded-lg p-4 bg-[#FCE4D6]/30">{error}</div>
-        <PipelineReRunButton onConfirmRerun={handleConfirmReRun} />
+        <PipelineReRunButton feature="f5" onConfirmRerun={() => onReRun?.()} />
       </div>
     );
   }
@@ -494,7 +470,7 @@ export function F5_1_EconomicsDashboard({ onEditAssumptions, onBack, onProceedTo
         <div className="flex items-center justify-between mb-6">
           <div className="text-[13px] text-[#161916]">ECONOMICS</div>
           <div className="flex items-center gap-2">
-            <PipelineReRunButton onConfirmRerun={handleConfirmReRun} />
+            <PipelineReRunButton feature="f5" onConfirmRerun={() => onReRun?.()} />
             <button type="button" className="h-9 px-3 border border-[#494949]/30 text-[#494949] rounded-md hover:bg-[#494949]/5">
               <Settings className="w-4 h-4" />
             </button>

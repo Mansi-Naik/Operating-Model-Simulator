@@ -1,11 +1,7 @@
 import { useCallback, useState } from 'react';
-import {
-  useForceRerun,
-  useMountPipelineCacheRedirect,
-  usePipelineCacheEntry,
-} from '../../../hooks/usePipelineCacheEntry';
+import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
 import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
-import { isForceRerun, setForceRerunFlag } from '../../../lib/pipelineCacheUtils';
+import { clearF4SavedState } from '../../../lib/pipelineRerunClear';
 import { F4_0_PreRun } from './pods/F4_0_PreRun';
 import { F4_1_VariantSelector } from './pods/F4_1_VariantSelector';
 import { F4_2_OrgRollup } from './pods/F4_2_OrgRollup';
@@ -33,23 +29,29 @@ export function PodStructure({
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
   const activeEngagementId = engagementId ?? engagementIdFromUrl;
-  const { hasCachedResults, isLoading: pipelineLoading } = usePipelineCacheEntry('f4', activeEngagementId);
+  const { hasCachedResults, isLoading: pipelineLoading, refresh: refreshPipeline } = usePipelineCacheEntry(
+    'f4',
+    activeEngagementId,
+  );
 
   const [currentScreen, setCurrentScreen] = useState<PodScreen>(initialScreen);
   const [showMathDrawer, setShowMathDrawer] = useState(false);
   const goToOrgRollup = useCallback(() => setCurrentScreen('org-rollup'), []);
-  const forceRerun = useForceRerun();
   useMountPipelineCacheRedirect('f4', activeEngagementId, goToOrgRollup, {
-    enabled: currentScreen === 'pre-run' && !forceRerun,
+    enabled: currentScreen === 'pre-run',
   });
 
-  const handleReRunToPreRun = useCallback(() => {
-    setForceRerunFlag(true);
+  const handleReRunToPreRun = useCallback(async () => {
+    if (!activeEngagementId) {
+      throw new Error('Missing engagement');
+    }
+    await clearF4SavedState(activeEngagementId);
+    await refreshPipeline();
     setCurrentScreen('pre-run');
-  }, []);
+  }, [activeEngagementId, refreshPipeline]);
 
   const handleGeneratePodVariants = () => {
-    if (!isForceRerun() && hasCachedResults) {
+    if (hasCachedResults) {
       setCurrentScreen('org-rollup');
       return;
     }
@@ -94,20 +96,18 @@ export function PodStructure({
     }
   };
 
-  if (!isForceRerun() && pipelineLoading && currentScreen === 'pre-run') {
+  if (pipelineLoading && currentScreen === 'pre-run') {
     return <PipelineCacheLoading />;
   }
 
   return (
     <div className="relative">
-      {/* Dimmed overlay when drawer is open */}
       {showMathDrawer && (
         <div className="absolute inset-0 bg-black/30 z-40" onClick={() => setShowMathDrawer(false)} />
       )}
 
       {renderScreen()}
 
-      {/* Show Math Drawer */}
       {showMathDrawer && <F4_3_ShowMathDrawer onClose={() => setShowMathDrawer(false)} />}
     </div>
   );

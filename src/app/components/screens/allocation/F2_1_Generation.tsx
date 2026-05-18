@@ -1,7 +1,7 @@
 import { Check, Circle, Loader2, ArrowLeft } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEngagement } from '../../../../hooks/useEngagement';
-import { isForceRerun, tasksFullyAllocated } from '../../../../lib/pipelineCacheUtils';
+import { tasksFullyAllocated } from '../../../../lib/pipelineCacheUtils';
 
 interface F2_1_GenerationProps {
   onCancel: () => void;
@@ -83,7 +83,7 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
         return;
       }
 
-      if (!isForceRerun() && tasksFullyAllocated(rows)) {
+      if (tasksFullyAllocated(rows)) {
         const allIds = rows
           .map((task) => (typeof task?.id === 'string' ? task.id : null))
           .filter((id): id is string => Boolean(id));
