@@ -345,6 +345,113 @@ function mergePreferences(engagement, preferences) {
 }
 
 /**
+ * @param {string} billingType
+ * @param {number} revDeltaPct
+ * @param {number} hcReductionPct
+ * @returns {string}
+ */
+function generateRevenueNarrative(billingType, revDeltaPct, hcReductionPct) {
+  if (billingType === 'fte_based' || billingType === 'hourly') {
+    return `Genpact revenue declines ${Math.abs(revDeltaPct).toFixed(1)}% as billable ${billingType === 'fte_based' ? 'headcount' : 'hours'} drops with automation. Consider negotiating gainshare or hybrid pricing to align incentives.`
+  }
+  if (billingType === 'transactional') {
+    return `Revenue is volume-based, so unchanged. Genpact captures ${Math.abs(hcReductionPct).toFixed(0)}% of the savings as margin expansion.`
+  }
+  if (billingType === 'fixed') {
+    return 'Fixed contract value means revenue stays flat. The cost reduction translates directly into Genpact margin uplift.'
+  }
+  return ''
+}
+
+/**
+ * @param {Record<string, unknown> | null | undefined} currentState
+ * @param {Record<string, unknown> | null | undefined} futureState
+ * @param {Record<string, unknown> | null | undefined} billingModel
+ * @returns {Record<string, unknown>}
+ */
+export function computeGenpactRevenueImpact(currentState, futureState, billingModel) {
+  const bm = billingModel && typeof billingModel === 'object' && !Array.isArray(billingModel)
+    ? /** @type {Record<string, unknown>} */ (billingModel)
+    : null
+  if (!bm || bm.type === 'not_specified') {
+    return {
+      applicable: false,
+      message: 'Billing model not specified — Genpact revenue impact not computed.',
+    }
+  }
+
+  const monthlyHeadcountCurrent = nonNeg(currentState?.headcount_total)
+  const monthlyHeadcountFuture = nonNeg(futureState?.headcount_total)
+  const headcountReductionPct =
+    monthlyHeadcountCurrent > 0
+      ? ((monthlyHeadcountCurrent - monthlyHeadcountFuture) / monthlyHeadcountCurrent) * 100
+      : 0
+
+  let monthlyRevenueCurrent = 0
+  let monthlyRevenueFuture = 0
+  const type = typeof bm.type === 'string' ? bm.type : ''
+
+  if (type === 'fte_based') {
+    const fallbackRate =
+      monthlyHeadcountCurrent > 0 ? nonNeg(currentState?.monthly_cost_usd) / monthlyHeadcountCurrent : 0
+    const ratePerFte = nonNeg(bm.monthly_per_fte) || fallbackRate
+    monthlyRevenueCurrent = monthlyHeadcountCurrent * ratePerFte
+    monthlyRevenueFuture = monthlyHeadcountFuture * ratePerFte
+  } else if (type === 'hourly') {
+    const hoursPerFteMonth = 160
+    const hr = nonNeg(bm.hourly_rate)
+    const totalHoursCurrent = monthlyHeadcountCurrent * hoursPerFteMonth
+    const totalHoursFuture = monthlyHeadcountFuture * hoursPerFteMonth
+    monthlyRevenueCurrent = totalHoursCurrent * hr
+    monthlyRevenueFuture = totalHoursFuture * hr
+  } else if (type === 'transactional') {
+    const volume = nonNeg(currentState?.items_per_day) * WORKING_DAYS_PER_MONTH
+    const unit = nonNeg(bm.unit_cost)
+    monthlyRevenueCurrent = volume * unit
+    monthlyRevenueFuture = volume * unit
+  } else if (type === 'fixed') {
+    const fixed = nonNeg(bm.fixed_monthly_value)
+    monthlyRevenueCurrent = fixed
+    monthlyRevenueFuture = fixed
+  } else {
+    return {
+      applicable: false,
+      message: 'Billing model not specified — Genpact revenue impact not computed.',
+    }
+  }
+
+  if (!Number.isFinite(monthlyRevenueCurrent)) monthlyRevenueCurrent = 0
+  if (!Number.isFinite(monthlyRevenueFuture)) monthlyRevenueFuture = 0
+
+  const revenueDelta = monthlyRevenueFuture - monthlyRevenueCurrent
+  const revenueDeltaPct =
+    monthlyRevenueCurrent > 0 ? (revenueDelta / monthlyRevenueCurrent) * 100 : 0
+
+  const costDelta = nonNeg(futureState?.monthly_cost_usd) - nonNeg(currentState?.monthly_cost_usd)
+  const grossProfitCurrent = monthlyRevenueCurrent - nonNeg(currentState?.monthly_cost_usd)
+  const grossProfitFuture = monthlyRevenueFuture - nonNeg(futureState?.monthly_cost_usd)
+  const grossProfitDelta = grossProfitFuture - grossProfitCurrent
+
+  return {
+    applicable: true,
+    billing_model_type: type,
+    monthly_revenue_current: monthlyRevenueCurrent,
+    monthly_revenue_future: monthlyRevenueFuture,
+    revenue_delta: revenueDelta,
+    revenue_delta_pct: revenueDeltaPct,
+    monthly_cost_delta: costDelta,
+    gross_profit_current: grossProfitCurrent,
+    gross_profit_future: grossProfitFuture,
+    gross_profit_delta: grossProfitDelta,
+    gross_margin_pct_current:
+      monthlyRevenueCurrent > 0 ? (grossProfitCurrent / monthlyRevenueCurrent) * 100 : 0,
+    gross_margin_pct_future:
+      monthlyRevenueFuture > 0 ? (grossProfitFuture / monthlyRevenueFuture) * 100 : 0,
+    narrative: generateRevenueNarrative(type, revenueDeltaPct, headcountReductionPct),
+  }
+}
+
+/**
  * @param {Record<string, unknown> | null | undefined} engagement
  * @param {Record<string, unknown> | null | undefined} prefs
  * @returns {number}
@@ -738,7 +845,11 @@ export function computeSavings(currentState, futureState) {
  *   retraining_cost: number,
  *   change_mgmt_cost: number,
  *   parallel_running_cost: number,
- *   total_transition_cost: number
+ *   uncapped_total: number,
+ *   total_transition_cost: number,
+ *   margin_cap_applied: boolean,
+ *   margin_cap_pct: number,
+ *   margin_profile: string
  * }}
  */
 export function computeTransitionCost(engagement, futureState, options) {
@@ -770,14 +881,35 @@ export function computeTransitionCost(engagement, futureState, options) {
   const parallelMonths = nonNeg(opts.parallel_running_months) || DEFAULT_PARALLEL_RUNNING_MONTHS
   const monthlySavings = Math.max(0, currentState.monthly_cost_usd - nonNeg(futureState?.monthly_cost_usd))
   const parallel_running_cost = monthlySavings * parallelMonths * 0.5
-  const total_transition_cost = tech_build_cost + retraining_cost + change_mgmt_cost + parallel_running_cost
+  const uncapped_total = tech_build_cost + retraining_cost + change_mgmt_cost + parallel_running_cost
+
+  const prefsFromEngagement = readPreferencesFromEngagement(engagement)
+  const marginRaw = prefsFromEngagement.margin_profile
+  const marginProfile =
+    typeof marginRaw === 'string' && marginRaw.trim() ? marginRaw.trim() : 'not_disclosed'
+  const marginCapPctMap = {
+    low: 8,
+    medium: 15,
+    high: 25,
+    not_disclosed: 15,
+    'Not disclosed': 15,
+  }
+  const marginCapPct = marginCapPctMap[/** @type {keyof typeof marginCapPctMap} */ (marginProfile)] ?? 15
+  const annualRevenue = nonNeg(futureState?.monthly_cost_usd) * 12
+  const transitionCostCap = annualRevenue > 0 ? (annualRevenue * marginCapPct) / 100 : Number.POSITIVE_INFINITY
+  const total_transition_cost = Math.min(uncapped_total, transitionCostCap)
+  const margin_cap_applied = uncapped_total > total_transition_cost && Number.isFinite(transitionCostCap)
 
   return {
     tech_build_cost,
     retraining_cost,
     change_mgmt_cost,
     parallel_running_cost,
+    uncapped_total,
     total_transition_cost,
+    margin_cap_applied,
+    margin_cap_pct: marginCapPct,
+    margin_profile: marginProfile,
   }
 }
 
@@ -1038,6 +1170,12 @@ export function runFullEconomics(engagement, tasks, f4SelectedVariant, f3Roles, 
     ...prefs,
     f3_roles: f3Roles,
   })
+  const billingModelRaw = prefs.billing_model
+  const billingModel =
+    billingModelRaw && typeof billingModelRaw === 'object' && !Array.isArray(billingModelRaw)
+      ? /** @type {Record<string, unknown>} */ (billingModelRaw)
+      : null
+  const genpact_revenue_impact = computeGenpactRevenueImpact(current_state, future_state, billingModel)
   const monthsToSteady = nonNeg(prefs.months_to_steady_state) || DEFAULT_MONTHS_TO_STEADY
   const savings_curve = computeRampedSavingsCurve(
     current_state.monthly_cost_usd,
@@ -1059,6 +1197,7 @@ export function runFullEconomics(engagement, tasks, f4SelectedVariant, f3Roles, 
     future_state,
     savings,
     transition_cost,
+    genpact_revenue_impact,
     savings_curve,
     payback_month,
     npv_36mo,

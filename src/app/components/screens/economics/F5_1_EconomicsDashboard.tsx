@@ -1,4 +1,4 @@
-import { Settings, ArrowRight, TrendingUp, Check, Sparkles, Info } from 'lucide-react';
+import { Settings, ArrowRight, TrendingUp, Check, Sparkles, Info, AlertTriangle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useEngagement } from '../../../../hooks/useEngagement';
@@ -12,6 +12,8 @@ interface F5_1_EconomicsDashboardProps {
   onProceedToF6?: () => void;
   onMissingF4Selection?: () => void;
   onReRun?: () => void | Promise<void>;
+  /** Opens F1 guided intake at Preferences (step 7) for billing model. */
+  onGoToF1Preferences?: () => void;
   refreshKey?: number;
 }
 
@@ -213,6 +215,7 @@ export function F5_1_EconomicsDashboard({
   onProceedToF6,
   onMissingF4Selection,
   onReRun,
+  onGoToF1Preferences,
   refreshKey = 0,
 }: F5_1_EconomicsDashboardProps) {
   void onBack;
@@ -404,8 +407,24 @@ export function F5_1_EconomicsDashboard({
   const drivers = Array.isArray(sensitivity.drivers) ? (sensitivity.drivers as Record<string, unknown>[]) : [];
   const paybackMonth = Math.floor(toNum(displayEconomics?.payback_month));
 
+  const genpact = asObj(displayEconomics?.genpact_revenue_impact);
+  const genpactApplicable = genpact.applicable === true;
+  const billingTypeLabel = String(genpact.billing_model_type ?? '');
+
   const monthlySavingsPct = toNum(savings.monthly_savings_pct);
   const monthlyCostDelta = toNum(futureState.monthly_cost_usd) - toNum(currentState.monthly_cost_usd);
+  const monthlyCostDeltaPct =
+    toNum(currentState.monthly_cost_usd) > 0
+      ? (monthlyCostDelta / toNum(currentState.monthly_cost_usd)) * 100
+      : 0;
+  const revenueDeltaPct = genpactApplicable ? toNum(genpact.revenue_delta_pct) : 0;
+  const grossMarginCurrent = genpactApplicable ? toNum(genpact.gross_margin_pct_current) : 0;
+  const grossMarginFuture = genpactApplicable ? toNum(genpact.gross_margin_pct_future) : 0;
+  const grossMarginDeltaPp = grossMarginFuture - grossMarginCurrent;
+  const showGainshareWarning =
+    genpactApplicable &&
+    (billingTypeLabel === 'fte_based' || billingTypeLabel === 'hourly') &&
+    revenueDeltaPct < -10;
   const costPerItemReduction = toNum(savings.cost_per_item_reduction_pct);
   const overheadDeltaPp = toNum(futureState.supervisor_overhead_pct) - toNum(currentState.supervisor_overhead_pct);
   const agentToday = frontlineHc(currentState);
@@ -620,6 +639,113 @@ export function F5_1_EconomicsDashboard({
           </div>
 
           <SavingsCurveChart curve={curve} paybackMonth={paybackMonth} />
+        </div>
+
+        {/* Genpact Revenue Impact (internal) */}
+        <div className="bg-[#FFF8ED] border border-[#FFAB28]/35 border-l-[3px] border-l-[#FFAB28] rounded-xl p-6 mb-6 shadow-sm">
+          <div className="flex items-center gap-3 mb-4">
+            <h2 className="text-[16px] font-bold text-[#161916]">Genpact Revenue Impact</h2>
+            <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-[#FFF0DC] text-[#6D7069] border border-[#161916]/10">
+              Internal
+            </span>
+          </div>
+
+          {!genpactApplicable ? (
+            <div className="flex flex-wrap items-center gap-2 text-[14px] text-[#494949]">
+              <span>
+                {typeof genpact.message === 'string' && genpact.message.trim()
+                  ? genpact.message
+                  : 'Add billing model in F1 Preferences to see Genpact-side impact.'}
+              </span>
+              {onGoToF1Preferences ? (
+                <button
+                  type="button"
+                  onClick={onGoToF1Preferences}
+                  className="text-[13px] font-medium text-[#FD4E59] underline hover:text-[#FD4E59]/80"
+                >
+                  Go to F1
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-4 mb-4">
+                <div className="bg-white/80 border border-[#161916]/8 rounded-lg p-4">
+                  <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
+                    Monthly revenue
+                  </div>
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <span className="text-[16px] font-medium text-[#6D7069]">
+                      {fmtCurrency(toNum(genpact.monthly_revenue_current), false)}
+                    </span>
+                    <span className="text-[13px] text-[#6D7069]">→</span>
+                    <span className="text-[22px] font-bold text-[#161916]">
+                      {fmtCurrency(toNum(genpact.monthly_revenue_future), false)}
+                    </span>
+                  </div>
+                  <div
+                    className={`text-[16px] font-bold mb-1 ${
+                      revenueDeltaPct > 0 ? 'text-[#548235]' : revenueDeltaPct < 0 ? 'text-[#FD4E59]' : 'text-[#6D7069]'
+                    }`}
+                  >
+                    {fmtDelta(revenueDeltaPct, '%')}
+                  </div>
+                  <div className="text-[12px] text-[#6D7069]">
+                    Under {billingTypeLabel.replace(/_/g, ' ')} model
+                  </div>
+                </div>
+                <div className="bg-white/80 border border-[#161916]/8 rounded-lg p-4">
+                  <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
+                    Monthly cost
+                  </div>
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <span className="text-[16px] font-medium text-[#6D7069]">
+                      {fmtCurrency(toNum(currentState.monthly_cost_usd), false)}
+                    </span>
+                    <span className="text-[13px] text-[#6D7069]">→</span>
+                    <span className="text-[22px] font-bold text-[#161916]">
+                      {fmtCurrency(toNum(futureState.monthly_cost_usd), false)}
+                    </span>
+                  </div>
+                  <div
+                    className={`text-[16px] font-bold mb-1 ${
+                      monthlyCostDeltaPct < 0 ? 'text-[#548235]' : monthlyCostDeltaPct > 0 ? 'text-[#FD4E59]' : 'text-[#6D7069]'
+                    }`}
+                  >
+                    {fmtDelta(monthlyCostDeltaPct, '%')}
+                  </div>
+                  <div className="text-[12px] text-[#6D7069]">Operating cost (model)</div>
+                </div>
+                <div className="bg-white/80 border border-[#161916]/8 rounded-lg p-4">
+                  <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
+                    Gross margin
+                  </div>
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <span className="text-[16px] font-medium text-[#6D7069]">{fmtPct(grossMarginCurrent, 1)}</span>
+                    <span className="text-[13px] text-[#6D7069]">→</span>
+                    <span className="text-[22px] font-bold text-[#161916]">{fmtPct(grossMarginFuture, 1)}</span>
+                  </div>
+                  <div
+                    className={`text-[16px] font-bold mb-1 ${
+                      grossMarginDeltaPp > 0 ? 'text-[#548235]' : grossMarginDeltaPp < 0 ? 'text-[#FD4E59]' : 'text-[#6D7069]'
+                    }`}
+                  >
+                    {fmtDelta(grossMarginDeltaPp, ' pp')}
+                  </div>
+                  <div className="text-[12px] text-[#6D7069]">vs modeled monthly cost</div>
+                </div>
+              </div>
+              <p className="text-[14px] text-[#161916] leading-relaxed mb-3">{String(genpact.narrative ?? '')}</p>
+              {showGainshareWarning ? (
+                <div className="inline-flex items-start gap-2 rounded-md border border-[#FFAB28]/50 bg-[#FFF0DC] px-3 py-2 text-[12px] text-[#494949] max-w-full">
+                  <AlertTriangle className="w-4 h-4 text-[#FFAB28] shrink-0 mt-0.5" aria-hidden />
+                  <span>
+                    Consider proposing gainshare/hybrid pricing to client to align incentives
+                  </span>
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
 
         {/* Sensitivity Panel */}

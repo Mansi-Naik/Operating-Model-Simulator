@@ -12,9 +12,10 @@ interface EconomicsProps {
   onBack?: () => void;
   onProceedToF6?: () => void;
   onMissingF4Selection?: () => void;
+  onGoToF1Preferences?: () => void;
 }
 
-export function Economics({ onBack, onProceedToF6, onMissingF4Selection }: EconomicsProps) {
+export function Economics({ onBack, onProceedToF6, onMissingF4Selection, onGoToF1Preferences }: EconomicsProps) {
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
   const [view, setView] = useState<EconomicsView>('pre-run');
@@ -68,6 +69,7 @@ export function Economics({ onBack, onProceedToF6, onMissingF4Selection }: Econo
           onProceedToF6={onProceedToF6}
           onMissingF4Selection={onMissingF4Selection}
           onReRun={handleReRun}
+          onGoToF1Preferences={onGoToF1Preferences}
           refreshKey={assumptionVersion}
         />
       </div>

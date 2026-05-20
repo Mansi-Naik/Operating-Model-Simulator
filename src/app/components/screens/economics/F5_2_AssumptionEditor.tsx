@@ -375,6 +375,20 @@ export function F5_2_AssumptionEditor({ onClose, onApplied, onSaved }: F5_2_Assu
 
             <MoneyInputRow label="Tech build cost" value={assumptions.tech_build_cost_estimate} onChange={(v) => updateAssumption('tech_build_cost_estimate', v)} source={assumptions.tech_build_cost_estimate === defaults.tech_build_cost_estimate ? defaultChip : modified} />
             <MoneyInputRow label="Retraining / FTE" value={assumptions.retraining_cost_per_fte} onChange={(v) => updateAssumption('retraining_cost_per_fte', v)} source={assumptions.retraining_cost_per_fte === defaults.retraining_cost_per_fte ? defaultChip : modified} />
+            {(() => {
+              const transition = asObj(computed?.transition_cost);
+              if (transition.margin_cap_applied !== true) return null;
+              const uncapped = Math.round(toNum(transition.uncapped_total));
+              const capped = Math.round(toNum(transition.total_transition_cost));
+              const pct = toNum(transition.margin_cap_pct);
+              const prof = String(transition.margin_profile ?? 'not_disclosed');
+              return (
+                <div className="mt-2 rounded-md border border-[#161916]/10 bg-[#FFF8ED] px-3 py-2 text-[12px] text-[#494949] leading-snug">
+                  Transition cost capped at {pct}% of annual revenue per {prof} margin profile. Uncapped total would
+                  have been ${uncapped.toLocaleString('en-US')}, capped at ${capped.toLocaleString('en-US')}.
+                </div>
+              );
+            })()}
           </div>
         </div>
 

@@ -31,6 +31,7 @@ export default function App() {
   const [podMessage, setPodMessage] = useState<string | null>(null);
   const [timelineStartScreen, setTimelineStartScreen] = useState<TimelineStartScreen | undefined>(undefined);
   const [activeEngagementId, setActiveEngagementId] = useState<string | null>(() => engagementIdFromUrl());
+  const [guidedFormInitialStep, setGuidedFormInitialStep] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     const handlePopState = () => setActiveEngagementId(engagementIdFromUrl());
@@ -61,6 +62,7 @@ export default function App() {
   };
 
   const handleModeSelect = (mode: 'upload' | 'guided') => {
+    setGuidedFormInitialStep(undefined);
     if (mode === 'upload') {
       setCurrentScreen('upload');
     } else {
@@ -70,11 +72,13 @@ export default function App() {
 
   const handleIntakeExtracted = (engagementId?: string) => {
     if (engagementId) setActiveEngagementId(engagementId);
+    setGuidedFormInitialStep(undefined);
     setCurrentScreen('guided-form');
   };
 
   const handleStartGuidedEmpty = () => {
     setActiveEngagementId(null);
+    setGuidedFormInitialStep(undefined);
     setCurrentScreen('guided-form');
   };
 
@@ -84,6 +88,7 @@ export default function App() {
     window.history.pushState({}, '', url.toString());
     setActiveEngagementId(engagementId);
     setCurrentFeature('f1');
+    setGuidedFormInitialStep(undefined);
     setCurrentScreen('guided-form');
   };
 
@@ -96,6 +101,7 @@ export default function App() {
   };
 
   const handleGuidedFormComplete = () => {
+    setGuidedFormInitialStep(undefined);
     setCurrentScreen('readiness-review');
   };
 
@@ -114,6 +120,12 @@ export default function App() {
   const handleProceedToF5 = () => {
     setCurrentFeature('f5');
     setCurrentScreen('economics');
+  };
+
+  const handleGoToF1PreferencesFromF5 = () => {
+    setCurrentFeature('f1');
+    setGuidedFormInitialStep(7);
+    setCurrentScreen('guided-form');
   };
 
   const handleMissingF4Selection = () => {
@@ -182,9 +194,13 @@ export default function App() {
       case 'guided-form':
         return (
           <GuidedForm
-            key={activeEngagementId ?? 'new'}
+            key={`${activeEngagementId ?? 'new'}-step-${guidedFormInitialStep ?? 1}`}
+            initialStep={guidedFormInitialStep}
             onComplete={handleGuidedFormComplete}
-            onBack={() => setCurrentScreen('mode-selector')}
+            onBack={() => {
+              setGuidedFormInitialStep(undefined);
+              setCurrentScreen('mode-selector');
+            }}
           />
         );
       case 'upload':
@@ -239,6 +255,7 @@ export default function App() {
             onBack={() => setCurrentScreen('pod-structure')}
             onProceedToF6={handleProceedToF6}
             onMissingF4Selection={handleMissingF4Selection}
+            onGoToF1Preferences={handleGoToF1PreferencesFromF5}
           />
         );
       case 'timeline':

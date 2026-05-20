@@ -11,10 +11,17 @@ import { StepPreferences } from './guided-steps/StepPreferences';
 interface GuidedFormProps {
   onComplete: () => void;
   onBack?: () => void;
+  /** When set (1–7), opens intake at that step (e.g. 7 = Preferences / billing). */
+  initialStep?: number;
 }
 
-export function GuidedForm({ onComplete, onBack }: GuidedFormProps) {
-  const [currentStep, setCurrentStep] = useState(1);
+function clampIntakeStep(step: number | undefined): number {
+  if (step == null || !Number.isFinite(step)) return 1
+  return Math.min(7, Math.max(1, Math.floor(step)))
+}
+
+export function GuidedForm({ onComplete, onBack, initialStep }: GuidedFormProps) {
+  const [currentStep, setCurrentStep] = useState(() => clampIntakeStep(initialStep));
   const [formData, setFormData] = useState<Record<string, unknown>>({});
 
   useEffect(() => {
