@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Lock } from 'lucide-react';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { IntakeAiBadge } from '../../intake/IntakeAiBadge';
 import {
@@ -25,6 +26,8 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
   const [techBuildCostEstimate, setTechBuildCostEstimate] = useState<string>(data?.tech_build_cost_estimate ?? '');
   const [retrainingCostPerFte, setRetrainingCostPerFte] = useState<string>(data?.retraining_cost_per_fte ?? '');
   const [monthsToSteadyState, setMonthsToSteadyState] = useState<string>(data?.months_to_steady_state ?? '');
+  const [marginProfile, setMarginProfile] = useState<string>('not_disclosed');
+  const [expectedImplementationMonths, setExpectedImplementationMonths] = useState<string>('');
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -55,6 +58,16 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
     if (p.tech_build_cost_estimate != null) setTechBuildCostEstimate(String(p.tech_build_cost_estimate));
     if (p.retraining_cost_per_fte != null) setRetrainingCostPerFte(String(p.retraining_cost_per_fte));
     if (p.months_to_steady_state != null) setMonthsToSteadyState(String(p.months_to_steady_state));
+    if (typeof p.margin_profile === 'string' && p.margin_profile.trim()) {
+      setMarginProfile(p.margin_profile.trim());
+    } else {
+      setMarginProfile('not_disclosed');
+    }
+    if (p.expected_implementation_months != null && String(p.expected_implementation_months).trim() !== '') {
+      setExpectedImplementationMonths(String(p.expected_implementation_months));
+    } else {
+      setExpectedImplementationMonths('');
+    }
 
     const m = collectAiConfidenceByFieldPath(intake);
     const pref = new Set<string>();
@@ -87,6 +100,14 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
     if (!v) return null;
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
+  };
+
+  const parseExpectedImplementationMonths = (value: string): number | null => {
+    const v = String(value ?? '').trim();
+    if (!v) return null;
+    const n = parseInt(v, 10);
+    if (!Number.isFinite(n) || n < 1 || n > 36) return null;
+    return n;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -125,6 +146,8 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
       tech_build_cost_estimate: parseNullableNumber(techBuildCostEstimate),
       retraining_cost_per_fte: parseNullableNumber(retrainingCostPerFte),
       months_to_steady_state: parseNullableNumber(monthsToSteadyState),
+      margin_profile: marginProfile === 'not_disclosed' ? null : marginProfile.trim() || null,
+      expected_implementation_months: parseExpectedImplementationMonths(expectedImplementationMonths),
     };
 
     next.preferences = newPreferencesObject;
@@ -151,6 +174,8 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
       tech_build_cost_estimate: parseNullableNumber(techBuildCostEstimate),
       retraining_cost_per_fte: parseNullableNumber(retrainingCostPerFte),
       months_to_steady_state: parseNullableNumber(monthsToSteadyState),
+      margin_profile: marginProfile === 'not_disclosed' ? null : marginProfile.trim() || null,
+      expected_implementation_months: parseExpectedImplementationMonths(expectedImplementationMonths),
     });
   };
 
@@ -241,6 +266,49 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
               <option value="GBP">GBP</option>
             </select>
           </div>
+        </div>
+
+        <div>
+          <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+            <Lock className="w-3.5 h-3.5 text-[#6D7069]" aria-hidden />
+            Margin profile (internal use)
+            {badge('preferences.margin_profile')}
+          </label>
+          <p className="text-[12px] text-[#6D7069] mb-2">
+            Used internally to calibrate transition investment. Not shown to client.
+          </p>
+          <select
+            value={marginProfile}
+            onChange={(e) => {
+              clearPath('preferences.margin_profile');
+              setMarginProfile(e.target.value);
+            }}
+            className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
+          >
+            <option value="not_disclosed">Not disclosed</option>
+            <option value="low">Low (&lt;10%)</option>
+            <option value="medium">Medium (10-20%)</option>
+            <option value="high">High (&gt;20%)</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+            Expected implementation duration (client expectation, months)
+          </label>
+          <p className="text-[12px] text-[#6D7069] mb-2">
+            How long does the client expect the transition to take? F6 Timeline will flag if computed timeline
+            exceeds this.
+          </p>
+          <input
+            type="number"
+            min={1}
+            max={36}
+            value={expectedImplementationMonths}
+            onChange={(e) => setExpectedImplementationMonths(e.target.value)}
+            placeholder="Optional"
+            className="w-full max-w-xs h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
+          />
         </div>
 
         <div className="flex flex-col gap-3">

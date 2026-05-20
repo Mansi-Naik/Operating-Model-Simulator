@@ -14,6 +14,11 @@ import { useEngagement } from '../../../hooks/useEngagement';
 import { aggregateSummary } from '../../../lib/summaryAggregator';
 import { downloadSummaryReportPdf } from '../../../lib/summaryPdfExport';
 import { getFinalAllocation } from '../../../lib/roleAggregation';
+import {
+  formatDomainSubfunctionLine,
+  formatMarginProfileForDisplay,
+  remainingMonthsChipLabel,
+} from '../../../lib/intakePhaseADisplay';
 import { supabase } from '../../../supabaseClient';
 
 type Recommendation = 'PROCEED' | 'MARGINAL' | 'DO_NOT_PROCEED' | 'NEEDS_REVIEW';
@@ -253,6 +258,35 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
 
   const headline = asObj(summary?.headline);
   const recommendation = String(headline.recommendation ?? 'NEEDS_REVIEW') as Recommendation;
+
+  const summaryContextChips = useMemo(() => {
+    const raw = engagement?.intake_data;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [] as string[];
+    const intake = raw as Record<string, unknown>;
+    const eng = (intake.engagement as Record<string, unknown>) || {};
+    const pref = (intake.preferences as Record<string, unknown>) || {};
+    const chips: string[] = [];
+    const domSub = formatDomainSubfunctionLine(
+      typeof eng.domain === 'string' ? eng.domain : '',
+      typeof eng.sub_function === 'string' ? eng.sub_function : '',
+    );
+    if (domSub) chips.push(domSub);
+    const rem = remainingMonthsChipLabel(
+      typeof eng.contract_end_date === 'string' ? eng.contract_end_date : '',
+    );
+    if (rem) chips.push(rem);
+    const mp = formatMarginProfileForDisplay(typeof pref.margin_profile === 'string' ? pref.margin_profile : '');
+    if (mp) chips.push(mp);
+    const exp = pref.expected_implementation_months;
+    if (typeof exp === 'number' && Number.isFinite(exp) && exp >= 1) {
+      chips.push(`${exp} months expected`);
+    } else if (typeof exp === 'string') {
+      const n = parseInt(exp.trim(), 10);
+      if (Number.isFinite(n) && n >= 1) chips.push(`${n} months expected`);
+    }
+    return chips;
+  }, [engagement?.intake_data]);
+
   const statTiles = (Array.isArray(summary?.stat_tiles) ? summary.stat_tiles : []) as StatTile[];
   const journey = (Array.isArray(summary?.journey) ? summary.journey : []) as JourneyNode[];
   const allocationSummary = asObj(summary?.allocation_summary);
@@ -457,6 +491,18 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
           <p className="text-[16px] text-[#494949] mb-4 max-w-[720px]">
             {String(headline.one_line_summary ?? '')}
           </p>
+          {summaryContextChips.length > 0 ? (
+            <div className="flex flex-wrap gap-2 mb-3">
+              {summaryContextChips.map((chip, i) => (
+                <span
+                  key={`${i}-${chip}`}
+                  className="inline-flex items-center rounded-full bg-[#FFF8ED] px-3 py-1 text-[12px] font-medium text-[#494949] border border-[#161916]/8"
+                >
+                  {chip}
+                </span>
+              ))}
+            </div>
+          ) : null}
           <span className="inline-block px-3 py-1 bg-white border border-[#494949]/15 rounded-full text-[12px] font-medium text-[#6D7069]">
             {String(headline.pattern_label ?? '')}
           </span>

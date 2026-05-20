@@ -2,6 +2,11 @@ import { useEffect, useMemo } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { useEngagement } from '../../../hooks/useEngagement';
 import { computeReadiness } from '../../../lib/readinessScoring';
+import {
+  formatContractPeriodSummary,
+  formatDomainSubfunctionLine,
+  formatMarginProfileForDisplay,
+} from '../../../lib/intakePhaseADisplay';
 
 interface ReadinessReviewProps {
   onProceed: () => void;
@@ -37,8 +42,39 @@ export function ReadinessReview({ onProceed, onBack }: ReadinessReviewProps) {
     band === 'green'
       ? 'bg-[#16A34A]/15 border-[#16A34A] text-[#16A34A]'
       : band === 'amber'
-      ? 'bg-[#FFAB28]/15 border-[#FFAB28] text-[#FFAB28]'
-      : 'bg-[#FD4E59]/15 border-[#FD4E59] text-[#FD4E59]';
+        ? 'bg-[#FFAB28]/15 border-[#FFAB28] text-[#FFAB28]'
+        : 'bg-[#FD4E59]/15 border-[#FD4E59] text-[#FD4E59]';
+
+  const engagementContextLines = useMemo(() => {
+    const raw = engagement?.intake_data;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [] as string[];
+    const intake = raw as Record<string, unknown>;
+    const eng = (intake.engagement as Record<string, unknown>) || {};
+    const pref = (intake.preferences as Record<string, unknown>) || {};
+    const lines: string[] = [];
+    const domSub = formatDomainSubfunctionLine(
+      typeof eng.domain === 'string' ? eng.domain : '',
+      typeof eng.sub_function === 'string' ? eng.sub_function : '',
+    );
+    if (domSub) lines.push(domSub);
+    const period = formatContractPeriodSummary(
+      typeof eng.contract_start_date === 'string' ? eng.contract_start_date : '',
+      typeof eng.contract_end_date === 'string' ? eng.contract_end_date : '',
+    );
+    if (period) lines.push(period);
+    const margin = formatMarginProfileForDisplay(
+      typeof pref.margin_profile === 'string' ? pref.margin_profile : '',
+    );
+    if (margin) lines.push(margin);
+    const exp = pref.expected_implementation_months;
+    if (typeof exp === 'number' && Number.isFinite(exp) && exp >= 1) {
+      lines.push(`${exp} months expected`);
+    } else if (typeof exp === 'string') {
+      const n = parseInt(exp.trim(), 10);
+      if (Number.isFinite(n) && n >= 1) lines.push(`${n} months expected`);
+    }
+    return lines;
+  }, [engagement?.intake_data]);
 
   const summaryText =
     band === 'green'
@@ -65,6 +101,19 @@ export function ReadinessReview({ onProceed, onBack }: ReadinessReviewProps) {
           <div className={`inline-flex px-4 py-1.5 border text-[13px] font-semibold rounded-full mb-6 ${bandClass}`}>
             Status: {band.toUpperCase()}
           </div>
+
+          {engagementContextLines.length > 0 ? (
+            <div className="mb-6 rounded-lg border border-[#161916]/10 bg-[#FDF8F4] p-4">
+              <h3 className="text-[12px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
+                Engagement context
+              </h3>
+              <ul className="space-y-1.5 text-[14px] text-[#161916]">
+                {engagementContextLines.map((line, i) => (
+                  <li key={`${i}-${line}`}>{line}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           {/* Score Gauge */}
           <div className="flex flex-col items-center mb-8">

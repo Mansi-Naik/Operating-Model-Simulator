@@ -7,6 +7,11 @@ import {
   collectAiConfidenceByFieldPath,
   removeConfidenceAtFieldPath,
 } from '../../../../lib/intakeAiUtils';
+import { DOMAIN_OPTIONS, subFunctionOptionsForDomain } from '../../../../lib/intakeEngagementConstants';
+import {
+  contractDatesOrderInvalid,
+  remainingMonthsFromTodayToEnd,
+} from '../../../../lib/intakePhaseADisplay';
 
 type Confidence = 'high' | 'medium' | 'low';
 
@@ -17,17 +22,6 @@ interface StepEngagementProps {
   currentStep: number;
   totalSteps: number;
 }
-
-const DOMAIN_OPTIONS: { value: string; label: string }[] = [
-  { value: '', label: 'Select industry' },
-  { value: 'safety_security', label: 'Safety & Security' },
-  { value: 'customer_service', label: 'Customer Service' },
-  { value: 'finance_ops', label: 'Finance Operations' },
-  { value: 'hr_ops', label: 'HR Operations' },
-  { value: 'sales_ops', label: 'Sales Operations' },
-  { value: 'supply_chain', label: 'Supply Chain' },
-  { value: 'other', label: 'Other' },
-];
 
 function formatPainForForm(pain: unknown): string {
   if (pain == null) return '';
@@ -102,6 +96,9 @@ export function StepEngagement({ data, onNext, onBack, currentStep, totalSteps }
   const [goalsDirty, setGoalsDirty] = useState(false);
   const [painDirty, setPainDirty] = useState(false);
   const [uploadBannerDismissed, setUploadBannerDismissed] = useState(false);
+  const [subFunction, setSubFunction] = useState('');
+  const [contractStartDate, setContractStartDate] = useState('');
+  const [contractEndDate, setContractEndDate] = useState('');
 
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
@@ -145,6 +142,11 @@ export function StepEngagement({ data, onNext, onBack, currentStep, totalSteps }
       painPoints: formatPainForForm(eng.pain_points),
       goals: formatGoalsForForm(eng.goals),
     });
+    setSubFunction(typeof eng.sub_function === 'string' ? eng.sub_function : '');
+    setContractStartDate(
+      typeof eng.contract_start_date === 'string' ? eng.contract_start_date : '',
+    );
+    setContractEndDate(typeof eng.contract_end_date === 'string' ? eng.contract_end_date : '');
     setGoalsDirty(false);
     setPainDirty(false);
 
@@ -178,8 +180,21 @@ export function StepEngagement({ data, onNext, onBack, currentStep, totalSteps }
     return <IntakeAiBadge confidence={c ?? 'medium'} />;
   };
 
+  const contractRangeInvalid =
+    contractStartDate.trim() &&
+    contractEndDate.trim() &&
+    contractDatesOrderInvalid(contractStartDate, contractEndDate);
+  const remainingMonthsBothDates =
+    contractStartDate.trim() && contractEndDate.trim()
+      ? remainingMonthsFromTodayToEnd(contractEndDate)
+      : null;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (contractRangeInvalid) {
+      setSaveError('Contract end date must be after the start date.');
+      return;
+    }
     setIsSaving(true);
     setSaveError(null);
 
@@ -212,6 +227,9 @@ export function StepEngagement({ data, onNext, onBack, currentStep, totalSteps }
       seasonality_notes: (data?.seasonality_notes as string | undefined) ?? prevEng.seasonality_notes,
       pain_points: painOut,
       goals: goalsOut,
+      sub_function: subFunction.trim() || null,
+      contract_start_date: contractStartDate.trim() || null,
+      contract_end_date: contractEndDate.trim() || null,
     };
 
     next.engagement = engagementIntakeData;
@@ -322,6 +340,7 @@ export function StepEngagement({ data, onNext, onBack, currentStep, totalSteps }
                 n.delete('engagement.domain');
                 return n;
               });
+              setSubFunction('');
               setFormData({ ...formData, industry: e.target.value });
             }}
             className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none focus:ring-4 focus:ring-[#FD4E59]/15"
@@ -338,6 +357,104 @@ export function StepEngagement({ data, onNext, onBack, currentStep, totalSteps }
             Suggest with AI
           </button>
         </div>
+
+        <div>
+          <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
+            Sub-function
+            {badgeFor('engagement.sub_function')}
+          </label>
+          {!formData.industry ? (
+            <p className="text-[13px] text-[#6D7069]">Select a domain to add an optional sub-function.</p>
+          ) : formData.industry === 'other' ? (
+            <input
+              type="text"
+              value={subFunction}
+              onChange={(e) => {
+                setAiPaths((prev) => {
+                  const n = new Set(prev);
+                  n.delete('engagement.sub_function');
+                  return n;
+                });
+                setSubFunction(e.target.value);
+              }}
+              placeholder="Describe the sub-function"
+              className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none focus:ring-4 focus:ring-[#FD4E59]/15"
+            />
+          ) : (
+            <select
+              value={subFunction}
+              onChange={(e) => {
+                setAiPaths((prev) => {
+                  const n = new Set(prev);
+                  n.delete('engagement.sub_function');
+                  return n;
+                });
+                setSubFunction(e.target.value);
+              }}
+              className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none focus:ring-4 focus:ring-[#FD4E59]/15"
+            >
+              <option value="">Select sub-function (optional)</option>
+              {subFunctionOptionsForDomain(formData.industry, subFunction).map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
+              Contract start date
+              {badgeFor('engagement.contract_start_date')}
+            </label>
+            <input
+              type="date"
+              value={contractStartDate}
+              onChange={(e) => {
+                setAiPaths((prev) => {
+                  const n = new Set(prev);
+                  n.delete('engagement.contract_start_date');
+                  return n;
+                });
+                setContractStartDate(e.target.value);
+              }}
+              className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none focus:ring-4 focus:ring-[#FD4E59]/15"
+            />
+          </div>
+          <div>
+            <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
+              Contract end date
+              {badgeFor('engagement.contract_end_date')}
+            </label>
+            <input
+              type="date"
+              value={contractEndDate}
+              onChange={(e) => {
+                setAiPaths((prev) => {
+                  const n = new Set(prev);
+                  n.delete('engagement.contract_end_date');
+                  return n;
+                });
+                setContractEndDate(e.target.value);
+              }}
+              className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none focus:ring-4 focus:ring-[#FD4E59]/15"
+            />
+          </div>
+        </div>
+        {contractRangeInvalid ? (
+          <p className="text-[13px] text-[#FD4E59]">Contract end date must be after the start date.</p>
+        ) : null}
+        {contractStartDate.trim() &&
+        contractEndDate.trim() &&
+        !contractRangeInvalid &&
+        remainingMonthsBothDates != null ? (
+          <p className="text-[13px] text-[#6D7069]">
+            Remaining duration: {remainingMonthsBothDates} month{remainingMonthsBothDates === 1 ? '' : 's'} from
+            today
+          </p>
+        ) : null}
 
         <div>
           <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
