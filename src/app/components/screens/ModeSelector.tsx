@@ -39,10 +39,17 @@ function mapTasksForInsert(
       task_type: t.task_type ?? null,
       volume_per_day: t.volume_per_day ?? null,
       avg_time_minutes: t.avg_time_minutes ?? null,
-      input_data_type: t.input_data_type ?? null,
-      consequence_of_error: t.consequence_of_error ?? null,
-      data_logged: typeof t.data_logged === 'boolean' ? t.data_logged : null,
-      regulatory_constraint: typeof t.regulatory_constraint === 'boolean' ? t.regulatory_constraint : false,
+      input_data_type:
+        typeof t.input_data_type === 'string' && t.input_data_type.trim()
+          ? t.input_data_type
+          : 'mixed',
+      consequence_of_error:
+        typeof t.consequence_of_error === 'string' && t.consequence_of_error.trim()
+          ? t.consequence_of_error
+          : 'medium',
+      data_logged: typeof t.data_logged === 'boolean' ? t.data_logged : true,
+      regulatory_constraint:
+        typeof t.regulatory_constraint === 'boolean' ? t.regulatory_constraint : true,
       source: 'ai_extracted',
     };
   });

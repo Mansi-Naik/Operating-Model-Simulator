@@ -14,7 +14,7 @@ The document was uploaded by a consultant and may be: a scoping doc, a proposal,
 
 SECTION B — CRITICAL ANTI-HALLUCINATION INSTRUCTIONS
 Apply these rules strictly:
-1. For most fields, leave null if not stated. EXCEPTION: For task-level fields task_type, input_data_type, consequence_of_error, data_logged, and regulatory_constraint, you MUST infer values based on the task description and standard BPO operations knowledge. These fields drive downstream feature logic and cannot be null. Mark them with _confidence: "medium" when inferred.
+1. For most fields, leave null if not stated. EXCEPTION: For task-level fields task_type, input_data_type, consequence_of_error, data_logged, and regulatory_constraint, you MUST infer values for EVERY task based on the task description and standard BPO operations knowledge. These fields drive downstream feature logic and cannot be null. Use per-field _field_confidence (see tasks schema) — never omit these four fields on any task row.
 2. For numeric fields, only extract numbers that are clearly stated (e.g., "we have 100 agents"). Do not estimate.
 3. For enum fields outside task-level task_type, input_data_type, and consequence_of_error, only pick a value if the document clearly implies it. Otherwise leave null.
 4. Tag every extracted field with a confidence level: "high" (clearly stated), "medium" (implied but not stated directly), "low" (rough inference). Fields you can't extract should be omitted entirely, not given a "low" confidence guess.
@@ -89,55 +89,63 @@ intake_data: {
   }
 }
 tasks: array of {
-  task_name: string,
-  role_performing: string,
-  task_type: "rule-based" | "judgment" | "edge-case" | "admin" | "reporting" | null,
+  task_name: string — verbatim task name from document,
+  role_performing: string — which role does this work,
+  task_type: "rule-based" | "judgment" | "edge-case" | "admin" | "reporting" (required — infer if not stated),
   volume_per_day: number | null,
   avg_time_minutes: number | null,
-  input_data_type: "structured" | "unstructured_text" | "unstructured_voice" | "unstructured_image" | "unstructured_video" | "mixed" | null,
-  consequence_of_error: "low" | "medium" | "high" | "critical" | null,
-  data_logged: boolean | null,
-  regulatory_constraint: boolean | null
+
+  input_data_type: "structured" | "unstructured_text" | "unstructured_image" | "unstructured_video" | "unstructured_voice" | "mixed" (required — never null),
+  consequence_of_error: "low" | "medium" | "high" | "critical" (required — never null),
+  data_logged: boolean (required — never null),
+  regulatory_constraint: boolean (required — never null),
+
+  _field_confidence: {
+    input_data_type: "high" | "medium" | "low",
+    consequence_of_error: "high" | "medium" | "low",
+    data_logged: "high" | "medium" | "low",
+    regulatory_constraint: "high" | "medium" | "low"
+  }
 }
 
-For task extraction, you MUST infer these fields based on the task description, even when they are not explicitly stated:
+For each task, evaluate these four fields explicitly (required on every task row):
 
-input_data_type — Inferred from what the task operates on:
-- Reviewing posts, comments, articles → "unstructured_text"
-- Analyzing call recordings, voice → "unstructured_voice"
-- Reviewing images, photos → "unstructured_image"
-- Reviewing videos → "unstructured_video"
-- Compiling reports, calculations, dashboards → "structured"
-- Coaching conversations (text-based) → "unstructured_text"
-- Tasks involving multiple types (e.g., reviewing posts with images) → "mixed"
-- Default if unclear: "mixed"
+INPUT_DATA_TYPE — What kind of input does this task work on?
+  - "structured" if the task processes database records, structured forms, structured logs, or rule-based data
+  - "unstructured_text" for text content like comments, emails, chat, documents, articles
+  - "unstructured_image" for image/photo review tasks
+  - "unstructured_video" for video review tasks
+  - "unstructured_voice" for voice calls or audio review
+  - "mixed" if the task involves multiple input types
 
-consequence_of_error — Inferred from task name and context:
-- Spam filtering, routing, reporting on standard data → "low"
-- Standard policy enforcement, sample audits → "medium"
-- Severe content (violence, hate), high-stakes decisions → "high"
-- CSAM, terrorism, regulatory-mandated tasks, precedent-setting → "critical"
-- Default if unclear: "medium"
+CONSEQUENCE_OF_ERROR — What happens if the work is done wrong?
+  - "low" if errors are easily reversible and have no safety or regulatory implications (e.g., spam mislabeled, routing wrong)
+  - "medium" if errors create customer impact but are correctable (appeal review, product inquiries, account changes)
+  - "high" if errors cause significant harm (severe harassment missed, fraud not flagged, financial loss)
+  - "critical" if errors cause irreversible harm or regulatory violations (CSAM missed, self-harm not flagged, AML violations)
 
-data_logged — Inferred from operational context:
-- Mention of WFM, QA tools, ticketing systems, dashboards → true
-- High-volume operational work in BPO context → true (defaults to true)
-- Coaching conversations, qualitative work → false
-- Calibration sessions, undocumented work → false
-- Default if unclear: true (BPO operations are typically logged)
+DATA_LOGGED — Is performance data captured for this task?
+  - true if specialists' actions, decisions, or outcomes are systematically recorded in a system (CRM, audit tool, QA tool)
+  - false if work happens off-system (coaching conversations, calibration discussions, policy meetings)
+  - true by default unless the document explicitly says otherwise
 
-task_type — Inferred from task verb and structure:
-- "Review against policy", "classify", "disposition" → "rule-based"
-- "Assess", "interpret", "evaluate", "audit" → "judgment"
-- "Escalate severe", "handle exception" → "edge-case"
-- "Compile report", "generate dashboard" → "reporting"
-- "Set up", "configure", "administer" → "admin"
+REGULATORY_CONSTRAINT — Does law/regulation require human handling?
+  - true if the document mentions ANY of: FinCEN, OCC, GDPR, CCPA, DSA (Digital Services Act), OSA (Online Safety Act), FOSTA-SESTA, COPPA, HIPAA, PCI-DSS, AML/KYC requirements
+  - true for tasks involving: severe content moderation (harassment, hate speech, violence), child safety/CSAM, self-harm/suicide, fraud investigation, compliance, regulatory disputes, identity verification
+  - true if the document explicitly says "regulatory constraint is true" or "must be human-handled" or similar
+  - false ONLY when the task is clearly routine/administrative AND no regulatory framework applies
 
-regulatory_constraint — Inferred:
-- Task mentions "mandatory human review", "regulatory", "jurisdictional law", "CSAM", "terrorism" → true
-- Otherwise → false
+CRITICAL: When in doubt about regulatory_constraint, default to TRUE. False negatives here cause safety issues downstream. False positives just mean a task gets evaluated more carefully.
 
-Set the _confidence suffix to "medium" for inferred values (not "low" or null), since these inferences are based on standard BPO operations knowledge.
+For _field_confidence, mark "high" if the document explicitly states the value, "medium" if you inferred it from context, "low" if you guessed from the task name only.
+
+task_type — Inferred from task verb and structure when not stated:
+  - "Review against policy", "classify", "disposition" → "rule-based"
+  - "Assess", "interpret", "evaluate", "audit" → "judgment"
+  - "Escalate severe", "handle exception" → "edge-case"
+  - "Compile report", "generate dashboard" → "reporting"
+  - "Set up", "configure", "administer" → "admin"
+  - Default if unclear: "judgment"
 
 SECTION D — FIELD-LEVEL CONFIDENCE TRACKING
 For every field you extract, also add a sibling key with the suffix "_confidence" set to "high", "medium", or "low". Example:
@@ -165,7 +173,7 @@ Do not include markdown formatting, code fences, or commentary. Just the JSON ob
 
 SHORT EXAMPLES (format only — do not copy values into your answer):
 Example A — clear intake snippet:
-{"document_relevance_score":0.92,"extraction_quality":"high","summary_message":"Extracted client, volumes, and cost goal from SOW.","extracted_fields_count":18,"total_possible_fields":50,"intake_data":{"engagement":{"client_name":"Acme Corp","client_name_confidence":"high","volume_per_day":50000,"volume_per_day_confidence":"high","goals":{"cost_reduction_target":25,"cost_reduction_target_confidence":"medium"}},"hierarchy":[],"tech_stack":{"current_systems":{},"ai_in_use":[]},"governance":{"risk_categories":[],"escalation_paths":[]},"kpis":{},"preferences":{}},"tasks":[{"task_name":"Review queue item","role_performing":"Agent","task_type":"rule-based","task_name_confidence":"high"}],"extraction_warnings":[]}
+{"document_relevance_score":0.92,"extraction_quality":"high","summary_message":"Extracted client, volumes, and cost goal from SOW.","extracted_fields_count":18,"total_possible_fields":50,"intake_data":{"engagement":{"client_name":"Acme Corp","client_name_confidence":"high","volume_per_day":50000,"volume_per_day_confidence":"high","goals":{"cost_reduction_target":25,"cost_reduction_target_confidence":"medium"}},"hierarchy":[],"tech_stack":{"current_systems":{},"ai_in_use":[]},"governance":{"risk_categories":[],"escalation_paths":[]},"kpis":{},"preferences":{}},"tasks":[{"task_name":"Review queue item","role_performing":"Agent","task_type":"rule-based","input_data_type":"unstructured_text","consequence_of_error":"medium","data_logged":true,"regulatory_constraint":false,"_field_confidence":{"input_data_type":"medium","consequence_of_error":"medium","data_logged":"medium","regulatory_constraint":"medium"},"task_name_confidence":"high"}],"extraction_warnings":[]}
 
 Example B — sparse / non-intake:
 {"document_relevance_score":0.1,"extraction_quality":"not_intake_doc","summary_message":"Document appears to be a recipe; minimal operational fields found.","extracted_fields_count":0,"total_possible_fields":50,"intake_data":{"engagement":{"client_name":null},"hierarchy":[],"tech_stack":{"current_systems":{},"ai_in_use":[]},"governance":{"risk_categories":[],"escalation_paths":[]},"kpis":{},"preferences":{}},"tasks":[],"extraction_warnings":["No BPO engagement indicators found."]}
