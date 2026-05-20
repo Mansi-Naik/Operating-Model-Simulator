@@ -99,6 +99,7 @@ export function StepEngagement({ data, onNext, onBack, currentStep, totalSteps }
   const [subFunction, setSubFunction] = useState('');
   const [contractStartDate, setContractStartDate] = useState('');
   const [contractEndDate, setContractEndDate] = useState('');
+  const [competitiveContext, setCompetitiveContext] = useState('');
 
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
@@ -147,6 +148,7 @@ export function StepEngagement({ data, onNext, onBack, currentStep, totalSteps }
       typeof eng.contract_start_date === 'string' ? eng.contract_start_date : '',
     );
     setContractEndDate(typeof eng.contract_end_date === 'string' ? eng.contract_end_date : '');
+    setCompetitiveContext(typeof eng.competitive_context === 'string' ? eng.competitive_context : '');
     setGoalsDirty(false);
     setPainDirty(false);
 
@@ -230,6 +232,7 @@ export function StepEngagement({ data, onNext, onBack, currentStep, totalSteps }
       sub_function: subFunction.trim() || null,
       contract_start_date: contractStartDate.trim() || null,
       contract_end_date: contractEndDate.trim() || null,
+      competitive_context: competitiveContext.trim() || null,
     };
 
     next.engagement = engagementIntakeData;
@@ -455,6 +458,35 @@ export function StepEngagement({ data, onNext, onBack, currentStep, totalSteps }
             today
           </p>
         ) : null}
+
+        <div>
+          <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
+            Competitive context
+            {badgeFor('engagement.competitive_context')}
+          </label>
+          <p className="text-[12px] text-[#6D7069] mb-2">
+            Where does Genpact stand vs other BPOs on this account? Affects automation appetite calibration.
+          </p>
+          <select
+            value={competitiveContext}
+            onChange={(e) => {
+              setAiPaths((prev) => {
+                const n = new Set(prev);
+                n.delete('engagement.competitive_context');
+                return n;
+              });
+              setCompetitiveContext(e.target.value);
+            }}
+            className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none focus:ring-4 focus:ring-[#FD4E59]/15"
+          >
+            <option value="">Select (optional)</option>
+            <option value="incumbent_stable">Incumbent (stable renewal)</option>
+            <option value="incumbent_threatened">Incumbent (under renewal threat)</option>
+            <option value="challenger">Challenger (Genpact pitching against incumbent BPO)</option>
+            <option value="new_client">New client (no incumbent)</option>
+            <option value="not_specified">Not specified</option>
+          </select>
+        </div>
 
         <div>
           <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">

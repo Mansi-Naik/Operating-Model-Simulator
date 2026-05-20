@@ -6,6 +6,8 @@ import {
   formatContractPeriodSummary,
   formatDomainSubfunctionLine,
   formatMarginProfileForDisplay,
+  formatCompetitiveContextForDisplay,
+  formatBillingModelForDisplay,
 } from '../../../lib/intakePhaseADisplay';
 
 interface ReadinessReviewProps {
@@ -62,10 +64,16 @@ export function ReadinessReview({ onProceed, onBack }: ReadinessReviewProps) {
       typeof eng.contract_end_date === 'string' ? eng.contract_end_date : '',
     );
     if (period) lines.push(period);
+    const competitiveLine = formatCompetitiveContextForDisplay(
+      typeof eng.competitive_context === 'string' ? eng.competitive_context : '',
+    );
+    if (competitiveLine) lines.push(competitiveLine);
     const margin = formatMarginProfileForDisplay(
       typeof pref.margin_profile === 'string' ? pref.margin_profile : '',
     );
     if (margin) lines.push(margin);
+    const billingLine = formatBillingModelForDisplay(pref.billing_model);
+    if (billingLine) lines.push(billingLine);
     const exp = pref.expected_implementation_months;
     if (typeof exp === 'number' && Number.isFinite(exp) && exp >= 1) {
       lines.push(`${exp} months expected`);

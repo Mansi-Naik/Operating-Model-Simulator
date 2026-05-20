@@ -91,3 +91,57 @@ export function formatContractPeriodSummary(
   }
   return `Starts ${formatMonthYear(s)}`;
 }
+
+const COMPETITIVE_CONTEXT_LABELS: Record<string, string> = {
+  incumbent_stable: 'Incumbent · stable renewal',
+  incumbent_threatened: 'Incumbent · under renewal threat',
+  challenger: 'Challenger (Genpact vs incumbent BPO)',
+  new_client: 'New client (no incumbent)',
+  not_specified: 'Not specified',
+};
+
+export function formatCompetitiveContextForDisplay(code: string | null | undefined): string | null {
+  const c = String(code ?? '').trim();
+  if (!c) return null;
+  return COMPETITIVE_CONTEXT_LABELS[c] ?? null;
+}
+
+function formatUsdAmount(n: number): string {
+  if (!Number.isFinite(n)) return '';
+  return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+export function formatBillingModelForDisplay(bmRaw: unknown): string | null {
+  if (!bmRaw || typeof bmRaw !== 'object' || Array.isArray(bmRaw)) return null;
+  const bm = bmRaw as Record<string, unknown>;
+  const t = typeof bm.type === 'string' ? bm.type : '';
+  if (!t || t === 'not_specified') return null;
+
+  if (t === 'transactional') {
+    const uc = Number(bm.unit_cost);
+    const vpRaw = bm.unit_cost_variance_pct;
+    const vp = vpRaw != null && vpRaw !== '' && Number.isFinite(Number(vpRaw)) ? Number(vpRaw) : 10;
+    if (Number.isFinite(uc)) {
+      return `Transactional · $${formatUsdAmount(uc)}/unit ±${vp}%`;
+    }
+    return `Transactional · ±${vp}%`;
+  }
+  if (t === 'hourly') {
+    const hr = Number(bm.hourly_rate);
+    if (!Number.isFinite(hr)) return null;
+    return `Hourly · $${formatUsdAmount(hr)}/hr`;
+  }
+  if (t === 'fte_based') {
+    const m = Number(bm.monthly_per_fte);
+    if (Number.isFinite(m)) {
+      return `FTE-based · $${formatUsdAmount(m)}/FTE/mo`;
+    }
+    return 'FTE-based';
+  }
+  if (t === 'fixed') {
+    const f = Number(bm.fixed_monthly_value);
+    if (!Number.isFinite(f)) return null;
+    return `Fixed · $${formatUsdAmount(f)}/mo`;
+  }
+  return null;
+}

@@ -16,6 +16,80 @@ interface StepPreferencesProps {
   totalSteps: number;
 }
 
+type BillingModelIntake = {
+  type: string;
+  unit_cost: number | null;
+  unit_cost_variance_pct: number | null;
+  hourly_rate: number | null;
+  monthly_per_fte: number | null;
+  fixed_monthly_value: number | null;
+};
+
+function buildBillingModelForIntake(
+  billingModelType: string,
+  unitCost: string,
+  unitCostVariance: string,
+  hourlyRate: string,
+  monthlyPerFte: string,
+  fixedMonthly: string,
+  parseNum: (value: string) => number | null,
+): BillingModelIntake {
+  const t = billingModelType || 'not_specified';
+  const empty: BillingModelIntake = {
+    type: 'not_specified',
+    unit_cost: null,
+    unit_cost_variance_pct: null,
+    hourly_rate: null,
+    monthly_per_fte: null,
+    fixed_monthly_value: null,
+  };
+  if (t === 'not_specified') {
+    return { ...empty, type: 'not_specified' };
+  }
+  if (t === 'transactional') {
+    const v = parseNum(unitCostVariance);
+    return {
+      type: 'transactional',
+      unit_cost: parseNum(unitCost),
+      unit_cost_variance_pct: v != null ? v : 10,
+      hourly_rate: null,
+      monthly_per_fte: null,
+      fixed_monthly_value: null,
+    };
+  }
+  if (t === 'hourly') {
+    return {
+      type: 'hourly',
+      unit_cost: null,
+      unit_cost_variance_pct: null,
+      hourly_rate: parseNum(hourlyRate),
+      monthly_per_fte: null,
+      fixed_monthly_value: null,
+    };
+  }
+  if (t === 'fte_based') {
+    return {
+      type: 'fte_based',
+      unit_cost: null,
+      unit_cost_variance_pct: null,
+      hourly_rate: null,
+      monthly_per_fte: parseNum(monthlyPerFte),
+      fixed_monthly_value: null,
+    };
+  }
+  if (t === 'fixed') {
+    return {
+      type: 'fixed',
+      unit_cost: null,
+      unit_cost_variance_pct: null,
+      hourly_rate: null,
+      monthly_per_fte: null,
+      fixed_monthly_value: parseNum(fixedMonthly),
+    };
+  }
+  return empty;
+}
+
 export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps }: StepPreferencesProps) {
   const [automationAppetite, setAutomationAppetite] = useState<string>(data?.automation_appetite || 'balanced');
   const [podDesign, setPodDesign] = useState<string>(data?.pod_design || 'balanced');
@@ -28,6 +102,12 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
   const [monthsToSteadyState, setMonthsToSteadyState] = useState<string>(data?.months_to_steady_state ?? '');
   const [marginProfile, setMarginProfile] = useState<string>('not_disclosed');
   const [expectedImplementationMonths, setExpectedImplementationMonths] = useState<string>('');
+  const [billingModelType, setBillingModelType] = useState<string>('not_specified');
+  const [unitCost, setUnitCost] = useState('');
+  const [unitCostVariance, setUnitCostVariance] = useState('10');
+  const [hourlyRate, setHourlyRate] = useState('');
+  const [monthlyPerFte, setMonthlyPerFte] = useState('');
+  const [fixedMonthly, setFixedMonthly] = useState('');
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -69,6 +149,28 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
       setExpectedImplementationMonths('');
     }
 
+    const bmRaw = p.billing_model;
+    const bm =
+      bmRaw && typeof bmRaw === 'object' && !Array.isArray(bmRaw)
+        ? (bmRaw as Record<string, unknown>)
+        : {};
+    setBillingModelType(typeof bm.type === 'string' && bm.type ? bm.type : 'not_specified');
+    setUnitCost(bm.unit_cost != null && String(bm.unit_cost).trim() !== '' ? String(bm.unit_cost) : '');
+    setUnitCostVariance(
+      bm.unit_cost_variance_pct != null && String(bm.unit_cost_variance_pct).trim() !== ''
+        ? String(bm.unit_cost_variance_pct)
+        : '10',
+    );
+    setHourlyRate(bm.hourly_rate != null && String(bm.hourly_rate).trim() !== '' ? String(bm.hourly_rate) : '');
+    setMonthlyPerFte(
+      bm.monthly_per_fte != null && String(bm.monthly_per_fte).trim() !== '' ? String(bm.monthly_per_fte) : '',
+    );
+    setFixedMonthly(
+      bm.fixed_monthly_value != null && String(bm.fixed_monthly_value).trim() !== ''
+        ? String(bm.fixed_monthly_value)
+        : '',
+    );
+
     const m = collectAiConfidenceByFieldPath(intake);
     const pref = new Set<string>();
     const cm = new Map<string, 'high' | 'medium' | 'low'>();
@@ -88,6 +190,20 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
       n.delete(path);
       return n;
     });
+  };
+
+  const resetBillingSubFields = () => {
+    setUnitCost('');
+    setUnitCostVariance('10');
+    setHourlyRate('');
+    setMonthlyPerFte('');
+    setFixedMonthly('');
+  };
+
+  const handleBillingModelTypeChange = (nextType: string) => {
+    clearPath('preferences.billing_model');
+    setBillingModelType(nextType);
+    resetBillingSubFields();
   };
 
   const badge = (path: string) => {
@@ -135,6 +251,16 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
         ? (next.preferences as Record<string, unknown>)
         : {};
 
+    const billing_model = buildBillingModelForIntake(
+      billingModelType,
+      unitCost,
+      unitCostVariance,
+      hourlyRate,
+      monthlyPerFte,
+      fixedMonthly,
+      parseNullableNumber,
+    );
+
     const newPreferencesObject = {
       ...prevPref,
       automation_appetite: automationAppetite,
@@ -148,6 +274,7 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
       months_to_steady_state: parseNullableNumber(monthsToSteadyState),
       margin_profile: marginProfile === 'not_disclosed' ? null : marginProfile.trim() || null,
       expected_implementation_months: parseExpectedImplementationMonths(expectedImplementationMonths),
+      billing_model,
     };
 
     next.preferences = newPreferencesObject;
@@ -176,6 +303,7 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
       months_to_steady_state: parseNullableNumber(monthsToSteadyState),
       margin_profile: marginProfile === 'not_disclosed' ? null : marginProfile.trim() || null,
       expected_implementation_months: parseExpectedImplementationMonths(expectedImplementationMonths),
+      billing_model,
     });
   };
 
@@ -310,6 +438,96 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
             className="w-full max-w-xs h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
           />
         </div>
+
+        <div>
+          <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+            Billing model
+          </label>
+          <p className="text-[12px] text-[#6D7069] mb-2">
+            How does Genpact bill this client? Affects revenue impact projections in economics.
+          </p>
+          <select
+            value={billingModelType}
+            onChange={(e) => handleBillingModelTypeChange(e.target.value)}
+            className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
+          >
+            <option value="transactional">Transactional</option>
+            <option value="hourly">Hourly</option>
+            <option value="fte_based">FTE-based</option>
+            <option value="fixed">Fixed</option>
+            <option value="not_specified">Not specified</option>
+          </select>
+        </div>
+
+        {billingModelType === 'transactional' ? (
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+                Unit cost target ($)
+              </label>
+              <input
+                type="number"
+                value={unitCost}
+                onChange={(e) => setUnitCost(e.target.value)}
+                className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+                Acceptable variance (%)
+              </label>
+              <input
+                type="number"
+                value={unitCostVariance}
+                onChange={(e) => setUnitCostVariance(e.target.value)}
+                className="w-full h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {billingModelType === 'hourly' ? (
+          <div>
+            <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+              Hourly rate ($)
+            </label>
+            <input
+              type="number"
+              value={hourlyRate}
+              onChange={(e) => setHourlyRate(e.target.value)}
+              className="w-full max-w-xs h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
+            />
+          </div>
+        ) : null}
+
+        {billingModelType === 'fte_based' ? (
+          <div>
+            <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+              Monthly rate per FTE ($)
+            </label>
+            <input
+              type="number"
+              value={monthlyPerFte}
+              onChange={(e) => setMonthlyPerFte(e.target.value)}
+              className="w-full max-w-xs h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
+            />
+            <p className="text-[12px] text-[#6D7069] mt-2">Leave blank to derive from hierarchy cost data</p>
+          </div>
+        ) : null}
+
+        {billingModelType === 'fixed' ? (
+          <div>
+            <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2 block">
+              Monthly contract value ($)
+            </label>
+            <input
+              type="number"
+              value={fixedMonthly}
+              onChange={(e) => setFixedMonthly(e.target.value)}
+              className="w-full max-w-xs h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
+            />
+          </div>
+        ) : null}
 
         <div className="flex flex-col gap-3">
           <label className="flex flex-wrap items-center gap-3">
