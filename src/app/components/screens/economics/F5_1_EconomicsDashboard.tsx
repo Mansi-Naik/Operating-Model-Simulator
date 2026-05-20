@@ -1,9 +1,15 @@
 import { Settings, ArrowRight, TrendingUp, Check, Sparkles, Info, AlertTriangle } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { normalizeF3Roles } from '../../../../lib/f3RolesStorage';
 import { runFullEconomics } from '../../../../lib/economicsEngine';
+import {
+  buildF5EconomicsPayload,
+  deterministicJsonEqual,
+  persistPipelineColumn,
+  stableStringify,
+} from '../../../../lib/pipelineDeterministicRefresh';
 import { supabase } from '../../../../supabaseClient';
 
 interface F5_1_EconomicsDashboardProps {
@@ -231,11 +237,10 @@ export function F5_1_EconomicsDashboard({
   const [assumptionsUsed, setAssumptionsUsed] = useState<Record<string, unknown>>({});
   const [saveError, setSaveError] = useState<string | null>(null);
   const [hasSavedEconomics, setHasSavedEconomics] = useState(false);
-  const [savedEconomicsSnapshot, setSavedEconomicsSnapshot] = useState<Record<string, unknown> | null>(
-    null,
-  );
-  const [sensitivityNarrative, setSensitivityNarrative] = useState('Generating analysis...');
+  const [cachedF5Payload, setCachedF5Payload] = useState<Record<string, unknown> | null>(null);
+  const [sensitivityNarrative, setSensitivityNarrative] = useState('');
   const [narrativePending, setNarrativePending] = useState(false);
+  const narrativeFetchedRef = useRef(false);
   const loadPipeline = useCallback(async () => {
     if (!engagementIdFromUrl) {
       setPipelineError('Missing engagement');
@@ -263,14 +268,14 @@ export function F5_1_EconomicsDashboard({
     setF3Roles(normalizeF3Roles(data?.f3_roles).redesigns as Record<string, unknown>[]);
     setF4Pods(parseF4Pods(data?.f4_pods));
     const savedEconomics = asObj(data?.f5_economics);
+    setCachedF5Payload(Object.keys(savedEconomics).length > 0 ? savedEconomics : null);
     setAssumptionsUsed(asObj(savedEconomics.assumptions_used));
     const hasSaved = Boolean(savedEconomics.economics_result);
     setHasSavedEconomics(hasSaved);
-    if (hasSaved) {
-      setSavedEconomicsSnapshot(asObj(savedEconomics.economics_result));
-    } else {
-      setSavedEconomicsSnapshot(null);
-    }
+    const cachedNarrative =
+      typeof savedEconomics.sensitivity_narrative === 'string' ? savedEconomics.sensitivity_narrative : '';
+    setSensitivityNarrative(cachedNarrative);
+    narrativeFetchedRef.current = Boolean(cachedNarrative.trim());
     setPipelineLoading(false);
   }, [engagementIdFromUrl, refreshKey]);
 
@@ -307,61 +312,66 @@ export function F5_1_EconomicsDashboard({
     ) as Record<string, unknown>;
   }, [engagement, tasks, selectedVariant, f3Roles, preferences]);
 
-  const displayEconomics = useMemo(() => {
-    if (savedEconomicsSnapshot && hasSavedEconomics) {
-      return savedEconomicsSnapshot;
-    }
-    return economicsResult;
-  }, [savedEconomicsSnapshot, hasSavedEconomics, economicsResult]);
+  const displayEconomics = economicsResult;
 
-  const economicsSignature = useMemo(
-    () =>
-      economicsResult
-        ? JSON.stringify({ selectedVariantName, assumptionsUsed, economicsResult })
-        : '',
-    [economicsResult, selectedVariantName, assumptionsUsed],
-  );
-  const sensitivitySignature = useMemo(
-    () => (economicsResult ? JSON.stringify(economicsResult.sensitivity ?? {}) : ''),
+  const freshDeterministicSignature = useMemo(
+    () => (economicsResult ? stableStringify(economicsResult) : ''),
     [economicsResult],
   );
 
   useEffect(() => {
-    if (!economicsResult || !engagementIdFromUrl) return;
+    if (!economicsResult || !engagementIdFromUrl || pipelineLoading) return;
     let cancelled = false;
-    const payload = {
-      selected_variant_at_compute: selectedVariantName,
-      assumptions_used: assumptionsUsed,
-      economics_result: economicsResult,
-      computed_at: new Date().toISOString(),
-    };
+
+    const cachedDeterministic = cachedF5Payload?.economics_result ?? null;
+    const deterministicChanged = !deterministicJsonEqual(cachedDeterministic, economicsResult);
+
+    if (!deterministicChanged) return;
+
+    const payload = buildF5EconomicsPayload(
+      cachedF5Payload,
+      economicsResult,
+      assumptionsUsed,
+      selectedVariantName,
+      sensitivityNarrative,
+    );
 
     (async () => {
       setSaveError(null);
-      if (pipelineId) {
-        const { error } = await supabase.from('pipeline_runs').update({ f5_economics: payload }).eq('id', pipelineId);
-        if (!cancelled && error) setSaveError(error.message);
-        if (!cancelled && !error) setHasSavedEconomics(true);
+      const result = await persistPipelineColumn(engagementIdFromUrl, 'f5_economics', payload);
+      if (cancelled) return;
+      if (!result.ok) {
+        setSaveError(result.error ?? 'Failed to save economics');
         return;
       }
-      const { error } = await supabase.from('pipeline_runs').insert({
-        engagement_id: engagementIdFromUrl,
-        f5_economics: payload,
-      });
-      if (!cancelled && error) setSaveError(error.message);
-      if (!cancelled && !error) setHasSavedEconomics(true);
+      if (result.pipelineId) setPipelineId(result.pipelineId);
+      setCachedF5Payload(payload);
+      setHasSavedEconomics(true);
+      console.log('[F5] Recomputed with new inputs — cache refreshed');
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [economicsSignature, economicsResult, selectedVariantName, pipelineId, engagementIdFromUrl]);
+  }, [
+    freshDeterministicSignature,
+    economicsResult,
+    engagementIdFromUrl,
+    pipelineLoading,
+    assumptionsUsed,
+    selectedVariantName,
+    sensitivityNarrative,
+    cachedF5Payload,
+  ]);
 
   useEffect(() => {
-    if (!economicsResult || !engagementIdFromUrl) return;
+    if (!economicsResult || !engagementIdFromUrl || pipelineLoading) return;
+    if (narrativeFetchedRef.current) return;
+
     const sensitivityData = economicsResult.sensitivity;
     let cancelled = false;
-    setSensitivityNarrative('Generating analysis...');
     setNarrativePending(true);
+    setSensitivityNarrative('Generating analysis...');
 
     (async () => {
       try {
@@ -375,14 +385,30 @@ export function F5_1_EconomicsDashboard({
         });
         const body = (await res.json().catch(() => ({}))) as { narrative?: string };
         if (cancelled) return;
-        setSensitivityNarrative(
+        const text =
           res.ok && typeof body.narrative === 'string' && body.narrative.trim()
             ? body.narrative.trim()
-            : 'Sensitivity analysis could not be generated, but the range bars show the key drivers and modeled savings ranges.',
+            : 'Sensitivity analysis could not be generated, but the range bars show the key drivers and modeled savings ranges.';
+        setSensitivityNarrative(text);
+        narrativeFetchedRef.current = true;
+
+        const payload = buildF5EconomicsPayload(
+          cachedF5Payload,
+          economicsResult,
+          assumptionsUsed,
+          selectedVariantName,
+          text,
         );
+        const saveResult = await persistPipelineColumn(engagementIdFromUrl, 'f5_economics', payload);
+        if (!cancelled && saveResult.ok) {
+          setCachedF5Payload(payload);
+          if (saveResult.pipelineId) setPipelineId(saveResult.pipelineId);
+        }
       } catch {
         if (!cancelled) {
-          setSensitivityNarrative('Sensitivity analysis could not be generated, but the range bars show the key drivers and modeled savings ranges.');
+          setSensitivityNarrative(
+            'Sensitivity analysis could not be generated, but the range bars show the key drivers and modeled savings ranges.',
+          );
         }
       } finally {
         if (!cancelled) setNarrativePending(false);
@@ -392,7 +418,7 @@ export function F5_1_EconomicsDashboard({
     return () => {
       cancelled = true;
     };
-  }, [sensitivitySignature, engagementIdFromUrl]);
+  }, [economicsResult, engagementIdFromUrl, pipelineLoading, assumptionsUsed, selectedVariantName, cachedF5Payload]);
 
   const loading = engagementLoading || pipelineLoading;
   const error = engagementError ?? pipelineError;

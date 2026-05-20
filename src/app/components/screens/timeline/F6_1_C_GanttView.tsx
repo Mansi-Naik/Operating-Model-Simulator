@@ -1,6 +1,15 @@
 import { ArrowRight, ChevronLeft, GitBranch, Info, Sparkles } from 'lucide-react';
 import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useEffect, useMemo, useState } from 'react';
+import { useEngagement } from '../../../../hooks/useEngagement';
+import { normalizeF3Roles } from '../../../../lib/f3RolesStorage';
+import {
+  deterministicJsonEqual,
+  mergeF6TimelineWithCachedNarratives,
+  persistPipelineColumn,
+  recomputeF6TimelineDeterministic,
+  stripTimelinePhaseNarratives,
+} from '../../../../lib/pipelineDeterministicRefresh';
 import { supabase } from '../../../../supabaseClient';
 import { F6_4_PhaseDetailDrawer } from './F6_4_PhaseDetailDrawer';
 
@@ -132,6 +141,7 @@ export function F6_1_C_GanttView({
 }: F6_1_C_GanttViewProps) {
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
+  const { engagement, tasks, loadEngagement } = useEngagement(engagementIdFromUrl);
 
   const [timeline, setTimeline] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
@@ -139,6 +149,11 @@ export function F6_1_C_GanttView({
   const [showCriticalPath, setShowCriticalPath] = useState(true);
   const [expandedQuickWin, setExpandedQuickWin] = useState<string | null>(null);
   const [selectedPhaseId, setSelectedPhaseId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!engagementIdFromUrl) return;
+    void loadEngagement(engagementIdFromUrl);
+  }, [engagementIdFromUrl, loadEngagement]);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,7 +168,7 @@ export function F6_1_C_GanttView({
       setError(null);
       const { data, error: loadError } = await supabase
         .from('pipeline_runs')
-        .select('f6_timeline')
+        .select('f6_timeline, f3_roles')
         .eq('engagement_id', engagementIdFromUrl)
         .maybeSingle();
 
@@ -171,7 +186,33 @@ export function F6_1_C_GanttView({
         return;
       }
 
-      setTimeline(loadedTimeline);
+      let displayTimeline = loadedTimeline;
+
+      if (engagement && Array.isArray(tasks) && tasks.length > 0) {
+        const f3Bundle = normalizeF3Roles(data?.f3_roles);
+        const deterministic = recomputeF6TimelineDeterministic(
+          engagement as Record<string, unknown>,
+          tasks as Record<string, unknown>[],
+          f3Bundle,
+        );
+        const merged = mergeF6TimelineWithCachedNarratives(loadedTimeline, deterministic);
+        if (
+          !deterministicJsonEqual(
+            stripTimelinePhaseNarratives(loadedTimeline),
+            stripTimelinePhaseNarratives(merged),
+          )
+        ) {
+          const result = await persistPipelineColumn(engagementIdFromUrl, 'f6_timeline', merged);
+          if (result.ok) {
+            displayTimeline = merged;
+            console.log('[F6] Recomputed with new inputs — cache refreshed');
+          }
+        } else {
+          displayTimeline = merged;
+        }
+      }
+
+      setTimeline(displayTimeline);
       setLoading(false);
     };
 
@@ -179,7 +220,7 @@ export function F6_1_C_GanttView({
     return () => {
       cancelled = true;
     };
-  }, [engagementIdFromUrl, onMissingTimeline]);
+  }, [engagementIdFromUrl, onMissingTimeline, engagement, tasks]);
 
   const graph = asObj(timeline?.graph);
   const summary = asObj(timeline?.summary);

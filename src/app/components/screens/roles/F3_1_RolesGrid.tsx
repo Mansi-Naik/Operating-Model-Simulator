@@ -3,7 +3,15 @@ import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { updateF3RoleAcceptance } from '../../../../lib/f3AcceptanceClient';
+import { aggregateByRole } from '../../../../lib/roleAggregation';
 import { dedupeLatestRedesignsByRole, getAcceptanceStatus, normalizeF3Roles } from '../../../../lib/f3RolesStorage';
+import {
+  deterministicJsonEqual,
+  f3DeterministicSnapshot,
+  persistPipelineColumn,
+  refreshF3DeterministicFields,
+} from '../../../../lib/pipelineDeterministicRefresh';
+import { useEngagement } from '../../../../hooks/useEngagement';
 import { supabase } from '../../../../supabaseClient';
 
 type PatternCard = 'minor-evolution' | 'meaningful-shift' | 'transformation' | 'redefinition';
@@ -112,6 +120,7 @@ export function F3_1_RolesGrid({
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
   const activeId = engagementId ?? engagementIdFromUrl;
+  const { engagement, tasks, loadEngagement } = useEngagement(activeId);
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -131,6 +140,7 @@ export function F3_1_RolesGrid({
       setLoading(false);
       return;
     }
+    if (!engagement) return;
     setLoading(true);
     setLoadError(null);
     const { data, error } = await supabase
@@ -149,7 +159,24 @@ export function F3_1_RolesGrid({
       return;
     }
 
-    const bundle = normalizeF3Roles(data?.f3_roles);
+    let bundle = normalizeF3Roles(data?.f3_roles);
+
+    if (engagement && Array.isArray(tasks) && tasks.length > 0) {
+      const intake = engagement.intake_data as Record<string, unknown> | undefined;
+      const hierarchy = Array.isArray(intake?.hierarchy) ? intake.hierarchy : [];
+      const aggregates = aggregateByRole(tasks as Record<string, unknown>[], hierarchy);
+      const refreshed = refreshF3DeterministicFields(bundle, aggregates);
+      if (!deterministicJsonEqual(f3DeterministicSnapshot(bundle), f3DeterministicSnapshot(refreshed))) {
+        const result = await persistPipelineColumn(activeId, 'f3_roles', refreshed);
+        if (result.ok) {
+          bundle = refreshed;
+          console.log('[F3] Recomputed with new inputs — cache refreshed');
+        }
+      } else {
+        bundle = refreshed;
+      }
+    }
+
     const redesignRows = dedupeLatestRedesignsByRole(bundle.redesigns as Record<string, unknown>[]);
     setHasPipelineRoles(
       redesignRows.length > 0 ||
@@ -184,7 +211,12 @@ export function F3_1_RolesGrid({
     setPendingEmergent(pendingE);
     setConfirmedRoles(confirmed);
     setLoading(false);
-  }, [activeId]);
+  }, [activeId, engagement, tasks]);
+
+  useEffect(() => {
+    if (!activeId) return;
+    void loadEngagement(activeId);
+  }, [activeId, loadEngagement]);
 
   useEffect(() => {
     void loadPipeline();

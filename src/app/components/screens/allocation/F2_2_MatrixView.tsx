@@ -4,6 +4,8 @@ import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { usePipelineRuns } from '../../../../hooks/usePipelineRuns';
 import { generateAdvisories } from '../../../../lib/advisoryGeneration';
+import { intakeChangedSincePipelineCreated } from '../../../../lib/pipelineDeterministicRefresh';
+import { supabase } from '../../../../supabaseClient';
 import { F2_4_Advisories } from './F2_4_Advisories';
 
 interface Task {
@@ -81,6 +83,39 @@ export function F2_2_MatrixView({
   const [sourceFilter, setSourceFilter] = useState<'All' | 'AI' | 'USER' | 'LOCKED'>('All');
   const [allocationFilter, setAllocationFilter] = useState<'All' | 'AUTO' | 'ASSIST' | 'HUMAN'>('All');
   const [showAdvisoriesExpanded, setShowAdvisoriesExpanded] = useState(false);
+  const [pipelineCreatedAt, setPipelineCreatedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activeEngagementId || !f2_exists) {
+      setPipelineCreatedAt(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const { data, error } = await supabase
+        .from('pipeline_runs')
+        .select('created_at')
+        .eq('engagement_id', activeEngagementId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (!error && data?.created_at) {
+        setPipelineCreatedAt(String(data.created_at));
+      } else {
+        setPipelineCreatedAt(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeEngagementId, f2_exists]);
+
+  const intakeChangedSinceF2 = useMemo(() => {
+    const updatedAt =
+      engagement && typeof engagement === 'object' && 'updated_at' in engagement
+        ? (engagement as { updated_at?: unknown }).updated_at
+        : null;
+    return intakeChangedSincePipelineCreated(updatedAt, pipelineCreatedAt);
+  }, [engagement, pipelineCreatedAt]);
 
   const tasksForAdvisories = useMemo(() => {
     return (Array.isArray(dbTasks) ? dbTasks : []).filter((row: any) => finalAllocation(row));
@@ -248,6 +283,19 @@ export function F2_2_MatrixView({
           <ArrowLeft className="w-4 h-4" />
           Back
         </button>
+      )}
+
+      {intakeChangedSinceF2 && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#FFAB28]/40 bg-[#FFF8EC] px-4 py-3">
+          <div className="flex items-start gap-2 text-[14px] text-[#161916]">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#FFAB28]" />
+            <span>
+              F1 intake has changed since this allocation was generated. Consider re-running F2 for updated
+              predictions.
+            </span>
+          </div>
+          <PipelineReRunButton feature="f2" onConfirmRerun={onReRun} />
+        </div>
       )}
 
       {/* Top Row */}

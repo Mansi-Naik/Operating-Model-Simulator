@@ -2,7 +2,18 @@ import { ChevronLeft, Calculator, Download, ArrowRight } from 'lucide-react';
 import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useEngagement } from '../../../../hooks/useEngagement';
-import { computePodCount, readEngagementVolumePerDay } from '../../../../lib/podSizing';
+import {
+  computePodCount,
+  generateThreeVariants,
+  getOperationalRiskProfileFromIntakeRisk,
+  readEngagementVolumePerDay,
+} from '../../../../lib/podSizing';
+import {
+  deterministicJsonEqual,
+  f4PodsDeterministicSnapshot,
+  mergeF4PodsWithCachedNarratives,
+  persistPipelineColumn,
+} from '../../../../lib/pipelineDeterministicRefresh';
 import { supabase } from '../../../../supabaseClient';
 
 interface F4_2_OrgRollupProps {
@@ -122,7 +133,10 @@ export function F4_2_OrgRollup({ onBack, onShowMath, onProceedToF5, onRedirectTo
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
 
   const { engagement, tasks, loading: engagementLoading, error: engagementError } = useEngagement(engagementIdFromUrl);
-  void tasks;
+  const taskRows = useMemo(
+    () => (Array.isArray(tasks) ? (tasks as Record<string, unknown>[]) : []),
+    [tasks],
+  );
 
   const [f4Loading, setF4Loading] = useState(true);
   const [f4Error, setF4Error] = useState<string | null>(null);
@@ -162,6 +176,44 @@ export function F4_2_OrgRollup({ onBack, onShowMath, onProceedToF5, onRedirectTo
   const engagementRecord = engagement as Record<string, unknown> | null;
 
   const selectedName = typeof f4Pods?.selected_variant_name === 'string' ? f4Pods.selected_variant_name.trim().toLowerCase() : '';
+  const constraintsUsed =
+    f4Pods?.constraints_used && typeof f4Pods.constraints_used === 'object' && !Array.isArray(f4Pods.constraints_used)
+      ? (f4Pods.constraints_used as Record<string, unknown>)
+      : {};
+
+  const freshSizingVariants = useMemo(() => {
+    if (!engagementRecord) return [];
+    const tol = String(constraintsUsed.intake_risk_tolerance ?? 'medium').toLowerCase();
+    const intakeRisk =
+      tol === 'low' || tol === 'medium' || tol === 'high' ? tol : 'medium';
+    return generateThreeVariants(engagementRecord, taskRows, {
+      overrideConstraints: {
+        risk_profile: String(constraintsUsed.risk_profile ?? getOperationalRiskProfileFromIntakeRisk(intakeRisk)),
+        target_span: Number(constraintsUsed.target_span) || undefined,
+        max_pod_size: Number(constraintsUsed.max_pod_size) || undefined,
+      },
+    }) as Record<string, unknown>[];
+  }, [engagementRecord, taskRows, constraintsUsed]);
+
+  useEffect(() => {
+    if (!engagementIdFromUrl || f4Loading || freshSizingVariants.length !== 3) return;
+    const merged = mergeF4PodsWithCachedNarratives(
+      freshSizingVariants,
+      f4Pods,
+      constraintsUsed,
+      selectedName,
+    );
+    if (!deterministicJsonEqual(f4PodsDeterministicSnapshot(f4Pods), f4PodsDeterministicSnapshot(merged))) {
+      void (async () => {
+        const result = await persistPipelineColumn(engagementIdFromUrl, 'f4_pods', merged);
+        if (result.ok) {
+          setF4Pods(merged);
+          console.log('[F4] Recomputed with new inputs — cache refreshed');
+        }
+      })();
+    }
+  }, [engagementIdFromUrl, f4Loading, freshSizingVariants, f4Pods, constraintsUsed, selectedName]);
+
   const allVariants = Array.isArray(f4Pods?.all_variants) ? (f4Pods.all_variants as Record<string, unknown>[]) : [];
 
   const selectedVariant = useMemo(() => {

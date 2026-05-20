@@ -8,6 +8,13 @@ import {
   getOperationalRiskProfileFromIntakeRisk,
   getSpanCapacityForIntakeRisk,
 } from '../../../../lib/podSizing';
+import {
+  deterministicJsonEqual,
+  f4PodsDeterministicSnapshot,
+  mergeF4PodsWithCachedNarratives,
+  persistPipelineColumn,
+  stableStringify,
+} from '../../../../lib/pipelineDeterministicRefresh';
 import { supabase } from '../../../../supabaseClient';
 
 type RiskProfile = 'low' | 'medium' | 'high';
@@ -146,8 +153,10 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, message, onR
 
   const [narrativeByKey, setNarrativeByKey] = useState<Record<string, string>>({});
   const [narrativePending, setNarrativePending] = useState<Record<string, boolean>>({});
+  const [cachedF4Pods, setCachedF4Pods] = useState<Record<string, unknown> | null>(null);
 
   const narrativeFetchGen = useRef(0);
+  const narrativesHydratedFromCacheRef = useRef(false);
 
   useEffect(() => {
     if (!engagement || constraintsHydrated) return;
@@ -166,9 +175,40 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, message, onR
     }
     let cancelled = false;
     (async () => {
-      const { error } = await supabase.from('pipeline_runs').select('id, f3_roles').eq('engagement_id', engagementIdFromUrl).maybeSingle();
+      const { data, error } = await supabase
+        .from('pipeline_runs')
+        .select('id, f3_roles, f4_pods')
+        .eq('engagement_id', engagementIdFromUrl)
+        .maybeSingle();
       if (cancelled) return;
-      if (error) setPipelineError(error.message);
+      if (error) {
+        setPipelineError(error.message);
+        setCachedF4Pods(null);
+      } else {
+        const pods =
+          data?.f4_pods && typeof data.f4_pods === 'object' && !Array.isArray(data.f4_pods)
+            ? (data.f4_pods as Record<string, unknown>)
+            : null;
+        setCachedF4Pods(pods);
+        if (pods && Array.isArray(pods.all_variants) && !narrativesHydratedFromCacheRef.current) {
+          const seeded: Record<string, string> = {};
+          for (const v of pods.all_variants) {
+            if (!v || typeof v !== 'object') continue;
+            const row = v as Record<string, unknown>;
+            const name = String(row.variant_name ?? '').toLowerCase();
+            const n = typeof row.narrative === 'string' ? row.narrative.trim() : '';
+            if (name && n) seeded[name] = n;
+          }
+          if (Object.keys(seeded).length > 0) {
+            setNarrativeByKey(seeded);
+            narrativesHydratedFromCacheRef.current = true;
+          }
+        }
+        if (typeof pods?.selected_variant_name === 'string' && pods.selected_variant_name.trim()) {
+          setSelectedVariantName(pods.selected_variant_name.trim().toLowerCase() as VariantKey);
+          setPersistOk(true);
+        }
+      }
       setPipelineLoaded(true);
     })();
     return () => {
@@ -190,7 +230,49 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, message, onR
     }) as Record<string, unknown>[];
   }, [engagementRecord, taskRows, riskProfile, targetSpan, maxPodSize]);
 
-  const variantSignature = useMemo(() => JSON.stringify(sizingVariants), [sizingVariants]);
+  const variantSignature = useMemo(() => stableStringify(sizingVariants), [sizingVariants]);
+
+  const constraintsSnapshot = useMemo(
+    () => ({
+      risk_profile: getOperationalRiskProfileFromIntakeRisk(riskProfile),
+      intake_risk_tolerance: riskProfile,
+      target_span: targetSpan,
+      max_pod_size: maxPodSize,
+      must_include: mustInclude,
+      shared_support: sharedSupport,
+    }),
+    [riskProfile, targetSpan, maxPodSize, mustInclude, sharedSupport],
+  );
+
+  useEffect(() => {
+    if (!engagementIdFromUrl || sizingVariants.length !== 3 || !constraintsHydrated) return;
+
+    const merged = mergeF4PodsWithCachedNarratives(
+      sizingVariants,
+      cachedF4Pods,
+      constraintsSnapshot,
+      selectedVariantName,
+    );
+    const prevSnap = f4PodsDeterministicSnapshot(cachedF4Pods);
+    const nextSnap = f4PodsDeterministicSnapshot(merged);
+    if (!deterministicJsonEqual(prevSnap, nextSnap)) {
+      void (async () => {
+        const result = await persistPipelineColumn(engagementIdFromUrl, 'f4_pods', merged);
+        if (result.ok) {
+          setCachedF4Pods(merged);
+          console.log('[F4] Recomputed with new inputs — cache refreshed');
+        }
+      })();
+    }
+  }, [
+    variantSignature,
+    engagementIdFromUrl,
+    constraintsHydrated,
+    cachedF4Pods,
+    constraintsSnapshot,
+    selectedVariantName,
+    sizingVariants,
+  ]);
 
   useEffect(() => {
     if (!engagementIdFromUrl || sizingVariants.length !== 3) return;
@@ -198,10 +280,19 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, message, onR
     const gen = ++narrativeFetchGen.current;
     const keys: VariantKey[] = ['conservative', 'balanced', 'aggressive'];
 
-    setNarrativePending({ conservative: true, balanced: true, aggressive: true });
-    setNarrativeByKey({});
-
+    const pending: Record<string, boolean> = {};
     for (const key of keys) {
+      pending[key] = !narrativeByKey[key]?.trim();
+    }
+    setNarrativePending(pending);
+
+    const keysNeedingFetch = keys.filter((key) => !narrativeByKey[key]?.trim());
+    if (keysNeedingFetch.length === 0) {
+      setNarrativePending({ conservative: false, balanced: false, aggressive: false });
+      return;
+    }
+
+    for (const key of keysNeedingFetch) {
       const variantData = sizingVariants.find(
         (v) => String((v as Record<string, unknown>).variant_name ?? '').toLowerCase() === key,
       ) as Record<string, unknown> | undefined;
@@ -240,7 +331,7 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, message, onR
         }
       })();
     }
-  }, [variantSignature, engagementIdFromUrl]);
+  }, [variantSignature, engagementIdFromUrl, narrativeByKey]);
 
   const constraintsHydratedRef = useRef(false);
   useEffect(() => {
@@ -289,15 +380,6 @@ export function F4_1_VariantSelector({ onViewOrgRollup, onShowMath, message, onR
       setSaveError('Missing engagement id');
       return;
     }
-
-    const constraintsSnapshot = {
-      risk_profile: getOperationalRiskProfileFromIntakeRisk(riskProfile),
-      intake_risk_tolerance: riskProfile,
-      target_span: targetSpan,
-      max_pod_size: maxPodSize,
-      must_include: mustInclude,
-      shared_support: sharedSupport,
-    };
 
     const allVariants = sizingVariants.map((raw) => {
       const v = raw as Record<string, unknown>;
