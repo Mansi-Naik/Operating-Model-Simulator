@@ -147,6 +147,16 @@ task_type — Inferred from task verb and structure when not stated:
   - "Set up", "configure", "administer" → "admin"
   - Default if unclear: "judgment"
 
+SECTION C.1 — TASK LIST COMPLETENESS (mandatory)
+The tasks array drives the allocation matrix (F2). Incomplete task lists break the model.
+- Output exactly ONE task object per distinct operational activity named or listed in the document.
+- NEVER merge, deduplicate, or summarize multiple document activities into a single task row.
+- NEVER return only "top" or "sample" tasks — include every item from task inventories, RACI matrices, workflow steps, role-level task lists, numbered lists, and bulleted activity lists.
+- If the document lists 17 activities, tasks.length MUST be 17 (not 10, not "about 10").
+- When the document has a table of tasks/activities, emit one row per table row (skip header rows only).
+- Prefer slightly more tasks over fewer; only omit exact duplicates (same task_name AND same role_performing).
+- If output size limits prevent listing every task, still extract as many as possible and add an extraction_warning: "Task list may be incomplete — N tasks extracted, document appears to list more."
+
 SECTION D — FIELD-LEVEL CONFIDENCE TRACKING
 For every field you extract, also add a sibling key with the suffix "_confidence" set to "high", "medium", or "low". Example:
   client_name: "Acme Corp",

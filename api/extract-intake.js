@@ -4,6 +4,13 @@ import { jsonrepair } from 'jsonrepair'
 import callGemini, { geminiLogExtras } from './_lib/geminiClient.js'
 import { applyCorsHeaders, resolveAllowedCorsOrigin } from '../src/lib/apiCors.js'
 import { buildExtractionPrompt } from '../src/lib/extractionPrompt.js'
+import {
+  buildTaskSupplementPrompt,
+  estimateTaskRowsInDocument,
+  mergeTaskLists,
+  responseLooksTruncated,
+  shouldRetryTaskSupplement,
+} from '../src/lib/extractionTaskCompleteness.js'
 import { createSupabaseAdmin } from '../src/lib/supabaseAdmin.js'
 
 const FEATURE = 'f1_extraction'
@@ -467,7 +474,9 @@ export default async function handler(req, res) {
       truncatedNote = '\n[Note: document was truncated to first 80,000 characters for processing]'
     }
 
-    promptText = buildExtractionPrompt(plain + truncatedNote)
+    const documentForPrompt = plain + truncatedNote
+    promptText = buildExtractionPrompt(documentForPrompt)
+    const estimatedTasksInDoc = estimateTaskRowsInDocument(plain)
 
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey) {
@@ -514,6 +523,47 @@ export default async function handler(req, res) {
       console.warn('[extract-intake] Used jsonrepair on model output (length', responseText?.length, ')')
     }
 
+    const truncatedResponse = responseLooksTruncated(responseText)
+    const firstTaskCount = Array.isArray(parsed.tasks) ? parsed.tasks.length : 0
+    const needsSupplement =
+      truncatedResponse ||
+      shouldRetryTaskSupplement(firstTaskCount, estimatedTasksInDoc)
+
+    if (needsSupplement && firstTaskCount > 0 && estimatedTasksInDoc > firstTaskCount) {
+      const firstTasks = (Array.isArray(parsed.tasks) ? parsed.tasks : [])
+        .filter((t) => t && typeof t === 'object' && !Array.isArray(t))
+        .map((t) => normalizeExtractedTask(/** @type {Record<string, unknown>} */ (t)))
+
+      console.warn(
+        `[extract-intake] Task supplement pass: extracted=${firstTaskCount}, estimated_in_doc≈${estimatedTasksInDoc}, truncated=${truncatedResponse}`,
+      )
+
+      try {
+        const supplementPrompt = buildTaskSupplementPrompt(documentForPrompt, firstTasks)
+        const supplementMeta = await callGemini(supplementPrompt, {
+          feature: 'f1_extraction',
+          temperature: 0.1,
+          response_mime_type: 'application/json',
+          max_output_tokens: maxOutputTokens,
+        })
+        const supplementWrap = parseExtractionJson(supplementMeta.response_text)
+        const supplementParsed = supplementWrap.value
+        const extraRaw = Array.isArray(supplementParsed.tasks) ? supplementParsed.tasks : []
+        const extraTasks = extraRaw
+          .filter((t) => t && typeof t === 'object' && !Array.isArray(t))
+          .map((t) => normalizeExtractedTask(/** @type {Record<string, unknown>} */ (t)))
+        const merged = mergeTaskLists(firstTasks, extraTasks)
+        if (merged.length > firstTasks.length) {
+          parsed.tasks = merged
+          console.warn(
+            `[extract-intake] Task supplement added ${merged.length - firstTasks.length} tasks (total ${merged.length})`,
+          )
+        }
+      } catch (supplementErr) {
+        console.warn('[extract-intake] Task supplement pass failed:', supplementErr)
+      }
+    }
+
     coerceExtractionPayload(/** @type {Record<string, unknown>} */ (parsed))
     const validationErr = validateExtractionPayload(parsed)
     if (validationErr) {
@@ -530,7 +580,33 @@ export default async function handler(req, res) {
       return
     }
 
-    const body = normalizeExtractionResponse(/** @type {Record<string, unknown>} */ (parsed))
+    let body = normalizeExtractionResponse(/** @type {Record<string, unknown>} */ (parsed))
+    const tasksExtractedCount = body.tasks.length
+
+    if (
+      estimatedTasksInDoc >= 8 &&
+      tasksExtractedCount < estimatedTasksInDoc &&
+      tasksExtractedCount < Math.floor(estimatedTasksInDoc * 0.85)
+    ) {
+      body = {
+        ...body,
+        extraction_warnings: [
+          ...body.extraction_warnings,
+          `Task list may be incomplete: extracted ${tasksExtractedCount} tasks; document text suggests about ${estimatedTasksInDoc} list items. Review F1 tasks or re-upload.`,
+        ],
+      }
+    }
+    if (truncatedResponse) {
+      body = {
+        ...body,
+        extraction_warnings: [
+          ...body.extraction_warnings,
+          'Extraction response may have been truncated; verify all tasks were captured.',
+        ],
+      }
+    }
+
+    body = { ...body, tasks_extracted_count: tasksExtractedCount, estimated_tasks_in_document: estimatedTasksInDoc }
 
     await insertLlmCallLog(supabase, {
       engagement_id: null,

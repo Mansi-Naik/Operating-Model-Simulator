@@ -11,6 +11,8 @@ interface ExtractionApiBody {
   intake_data: Record<string, unknown>;
   tasks: Record<string, unknown>[];
   extraction_warnings: string[];
+  tasks_extracted_count?: number;
+  estimated_tasks_in_document?: number;
 }
 
 interface ModeSelectorProps {
@@ -133,6 +135,11 @@ export function ModeSelector({
       extracted_at: new Date().toISOString(),
       extracted_fields_count: extracted.extracted_fields_count,
       summary_message: extracted.summary_message,
+      tasks_extracted_count:
+        typeof extracted.tasks_extracted_count === 'number'
+          ? extracted.tasks_extracted_count
+          : (extracted.tasks ?? []).length,
+      estimated_tasks_in_document: extracted.estimated_tasks_in_document ?? null,
     };
 
     const { data: row, error: insErr } = await supabase
