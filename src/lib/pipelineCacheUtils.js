@@ -84,6 +84,20 @@ export function tasksFullyAllocated(tasks) {
 }
 
 /**
+ * Tasks that still need a first-time AI allocation (no ai_allocation saved).
+ *
+ * @param {Record<string, unknown>[]} tasks
+ * @returns {Record<string, unknown>[]}
+ */
+export function tasksMissingAiAllocation(tasks) {
+  if (!Array.isArray(tasks)) return []
+  return tasks.filter((t) => {
+    const ai = t?.ai_allocation
+    return ai == null || !String(ai).trim()
+  })
+}
+
+/**
  * @param {Record<string, unknown>[]} existingTasks
  * @returns {Map<string, Record<string, unknown>>}
  */

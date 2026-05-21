@@ -24,6 +24,8 @@ interface Task {
 interface F2_2_MatrixViewProps {
   onTaskClick: (taskId: string) => void;
   onReRun: () => void | Promise<void>;
+  /** Run predict-allocation only for tasks without saved ai_allocation. */
+  onFillMissing?: () => void;
   onBack?: () => void;
   onProceedToF3?: () => void;
   engagementId?: string | null;
@@ -45,6 +47,7 @@ function effectiveAllocation(row: any): 'tech-automated' | 'tech-assisted' | 'hu
 export function F2_2_MatrixView({
   onTaskClick,
   onReRun,
+  onFillMissing,
   onBack,
   onProceedToF3,
   engagementId,
@@ -522,7 +525,7 @@ export function F2_2_MatrixView({
 
       {/* Proceed to F3 */}
       {onProceedToF3 && (
-        <div className="mt-8 flex flex-col items-end gap-2">
+        <div className="mt-8 flex flex-col items-end gap-3">
           {isLoadingData ? (
             <div className="text-[13px] text-[#6D7069]">
               Loading allocation results…
@@ -532,19 +535,31 @@ export function F2_2_MatrixView({
               Add tasks in intake before continuing to role redesign.
             </div>
           ) : fallbackCount > 0 ? (
-            <div className="text-[13px] text-[#6D7069]">
+            <div className="text-[13px] text-[#494949] text-right max-w-[520px]">
               {fallbackCount} task{fallbackCount === 1 ? '' : 's'} show as HUMAN (default) with no saved AI allocation
-              — you can continue or re-run to fill gaps. ({savedAllocationCount} of {allTaskRows.length}{' '}
-              saved)
+              — allocate them below or use Re-run to regenerate the full matrix. ({savedAllocationCount} of{' '}
+              {allTaskRows.length} saved)
             </div>
           ) : null}
-          <button
-            onClick={onProceedToF3}
-            disabled={!canProceedToF3}
-            className="h-11 px-8 bg-[#FD4E59] text-white text-[15px] font-semibold rounded-lg hover:bg-[#FD4E59]/90 disabled:opacity-50 disabled:pointer-events-none"
-          >
-            Proceed to Roles →
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            {fallbackCount > 0 && onFillMissing ? (
+              <button
+                type="button"
+                onClick={onFillMissing}
+                className="h-11 px-6 border border-[#FD4E59] text-[#FD4E59] text-[15px] font-semibold rounded-lg hover:bg-[#FD4E59]/5"
+              >
+                Allocate remaining {fallbackCount} task{fallbackCount === 1 ? '' : 's'}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onProceedToF3}
+              disabled={!canProceedToF3}
+              className="h-11 px-8 bg-[#FD4E59] text-white text-[15px] font-semibold rounded-lg hover:bg-[#FD4E59]/90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Proceed to Roles →
+            </button>
+          </div>
         </div>
       )}
     </div>

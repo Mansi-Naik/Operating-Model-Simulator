@@ -1,7 +1,7 @@
 import { Check, Circle, Loader2, ArrowLeft } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEngagement } from '../../../../hooks/useEngagement';
-import { tasksFullyAllocated } from '../../../../lib/pipelineCacheUtils';
+import { tasksFullyAllocated, tasksMissingAiAllocation } from '../../../../lib/pipelineCacheUtils';
 
 interface F2_1_GenerationProps {
   onCancel: () => void;
@@ -74,27 +74,41 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
       }
 
       const loaded = await loadEngagement(activeEngagementId);
-      const rows = Array.isArray(loaded?.tasks) ? loaded.tasks : [];
-      setTotalTasks(rows.length);
-      setCompletedTasks(0);
-      if (!rows || rows.length === 0) {
+      const allRows = Array.isArray(loaded?.tasks) ? loaded.tasks : [];
+      if (!allRows || allRows.length === 0) {
         console.warn('[F2.1] No tasks to process. Aborting loop.');
         setGenerationError('No tasks found for this engagement. Add tasks in intake before generating the matrix.');
         return;
       }
 
-      if (tasksFullyAllocated(rows)) {
-        const allIds = rows
+      if (tasksFullyAllocated(allRows)) {
+        const allIds = allRows
           .map((task) => (typeof task?.id === 'string' ? task.id : null))
           .filter((id): id is string => Boolean(id));
-        setCompletedTasks(rows.length);
+        setTotalTasks(allRows.length);
+        setCompletedTasks(allRows.length);
         setConstraintsDone(true);
         setCapabilitiesDone(true);
         setCalibrationDone(true);
         setValidationDone(true);
-        await onComplete?.({ processedTaskIds: allIds, failedTaskIds: [], total: rows.length });
+        await onComplete?.({ processedTaskIds: allIds, failedTaskIds: [], total: allRows.length });
         return;
       }
+
+      const rows = tasksMissingAiAllocation(allRows);
+      if (rows.length === 0) {
+        setGenerationError('All tasks already have saved allocations.');
+        return;
+      }
+
+      if (rows.length < allRows.length) {
+        console.log(
+          `[F2.1] Filling ${rows.length} task(s) missing AI allocation (${allRows.length - rows.length} already saved)`,
+        );
+      }
+
+      setTotalTasks(rows.length);
+      setCompletedTasks(0);
 
       const processedTaskIds = [];
       const failedTaskIds = [];
@@ -181,7 +195,7 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
         setGenerationError(
           failedTaskIds.length > 0
             ? [
-                `Allocation failed for all ${rows.length} tasks.`,
+                `Allocation failed for all ${rows.length} task(s) in this run.`,
                 firstFailureSummary ? `First error: ${firstFailureSummary}` : '',
                 '',
                 'Gemini key issues usually show as HTTP 500 with "Missing GEMINI_API_KEY" or a model error in the response. If you only run `npm run dev` (Vite), the UI calls /api which must be served — prefer `npm run dev:vercel`, or run another process on port 3000 (Vite proxies /api there).',
@@ -198,7 +212,7 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
         console.warn('[F2.1] Partial allocation failures:', { failedTaskIds });
       }
 
-      await onComplete?.({ processedTaskIds, failedTaskIds, total: rows.length });
+      await onComplete?.({ processedTaskIds, failedTaskIds, total: allRows.length });
     };
 
     void run();

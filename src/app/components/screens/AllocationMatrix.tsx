@@ -2,14 +2,13 @@ import { useCallback, useMemo, useState } from 'react';
 import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
 import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
 import { clearF2SavedState } from '../../../lib/pipelineRerunClear';
-import { tasksHaveAiAllocations } from '../../../lib/pipelineCacheUtils';
+import { tasksFullyAllocated, tasksMissingAiAllocation } from '../../../lib/pipelineCacheUtils';
+import { toast } from 'sonner';
 import { F2_0_PreRun } from './allocation/F2_0_PreRun';
 import { F2_1_Generation } from './allocation/F2_1_Generation';
 import { F2_2_MatrixView } from './allocation/F2_2_MatrixView';
 import { F2_3_TaskDrawer } from './allocation/F2_3_TaskDrawer';
 import { useEngagement } from '../../../hooks/useEngagement';
-import { getFinalAllocation } from '../../../lib/roleAggregation';
-
 type AllocationScreen = 'pre-run' | 'generating' | 'matrix-view';
 
 interface AllocationMatrixProps {
@@ -63,19 +62,38 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
       : null;
   }, [engagement?.intake_data]);
 
-  const handleGenerate = (appetite: string) => {
-    void appetite;
-    const sourceTasks = Array.isArray(tasks) ? tasks : [];
-    if (hasCachedResults && tasksHaveAiAllocations(sourceTasks)) {
-      setCurrentScreen('matrix-view');
-      return;
-    }
+  const startAllocationGeneration = (sourceTasks: Record<string, unknown>[]) => {
     setGenerationInput({
       engagementId: activeEngagementId,
       tasks: sourceTasks,
     });
     setGenerationResult(null);
     setCurrentScreen('generating');
+  };
+
+  const handleGenerate = (appetite: string) => {
+    void appetite;
+    const sourceTasks = Array.isArray(tasks) ? tasks : [];
+    if (hasCachedResults && tasksFullyAllocated(sourceTasks)) {
+      setCurrentScreen('matrix-view');
+      return;
+    }
+    const missing = tasksMissingAiAllocation(sourceTasks);
+    if (missing.length > 0 && missing.length < sourceTasks.length) {
+      toast.info(`Allocating ${missing.length} remaining task${missing.length === 1 ? '' : 's'}…`);
+    }
+    startAllocationGeneration(sourceTasks);
+  };
+
+  const handleFillMissingAllocations = () => {
+    const sourceTasks = Array.isArray(tasks) ? tasks : [];
+    const missing = tasksMissingAiAllocation(sourceTasks);
+    if (missing.length === 0) {
+      toast.message('Every task already has a saved AI allocation.');
+      return;
+    }
+    toast.info(`Allocating ${missing.length} remaining task${missing.length === 1 ? '' : 's'}…`);
+    startAllocationGeneration(sourceTasks);
   };
 
   const handleCancel = () => {
@@ -130,19 +148,20 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
             engagementId={generationInput.engagementId}
             onComplete={async (result) => {
               setGenerationResult(result);
-              let loadedTasks: Record<string, unknown>[] = [];
-              if (generationInput.engagementId) {
-                const loaded = await loadEngagement(generationInput.engagementId);
-                loadedTasks = Array.isArray(loaded?.tasks) ? (loaded.tasks as Record<string, unknown>[]) : [];
+              await refreshPipeline();
+              if (result.failedTaskIds.length > 0) {
+                toast.warning(
+                  `${result.failedTaskIds.length} task(s) could not be allocated. Use "Allocate remaining" on the matrix or check DevTools → Network.`,
+                );
+              } else if (result.processedTaskIds.length > 0) {
+                const filled = result.processedTaskIds.length;
+                toast.success(
+                  filled === result.total
+                    ? `Allocation complete for all ${result.total} tasks.`
+                    : `Saved allocations for ${filled} task${filled === 1 ? '' : 's'}.`,
+                );
               }
-              const allAllocated =
-                loadedTasks.length > 0 &&
-                loadedTasks.every((t) => getFinalAllocation(t).length > 0);
-              if (allAllocated) {
-                setCurrentScreen('matrix-view');
-              } else {
-                setCurrentScreen('pre-run');
-              }
+              setCurrentScreen('matrix-view');
             }}
           />
         );
@@ -152,6 +171,7 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
             <F2_2_MatrixView
               onTaskClick={handleTaskClick}
               onReRun={handleReRunToPreRun}
+              onFillMissing={handleFillMissingAllocations}
               onBack={() => setCurrentScreen('pre-run')}
               onProceedToF3={onProceedToF3}
               generationResult={generationResult}
@@ -162,7 +182,7 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
     }
   };
 
-  if (pipelineLoading && (currentScreen === 'pre-run' || currentScreen === 'generating')) {
+  if (pipelineLoading && currentScreen === 'pre-run') {
     return <PipelineCacheLoading />;
   }
 
