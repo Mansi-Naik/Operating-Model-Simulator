@@ -53,10 +53,14 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
   );
 
   const handleGenerate = useCallback(() => {
-    setForceGeneration(false);
+    if (!preview.hasF2Predictions) {
+      toast.error('Complete the allocation matrix (F2) for every task before generating roles.');
+      return;
+    }
+    setForceGeneration(true);
     setGenerationRunKey((k) => k + 1);
     setCurrentScreen('generating');
-  }, []);
+  }, [preview.hasF2Predictions]);
 
   const handleGenerationComplete = useCallback(
     async (result?: { failedRoles: string[]; roleNames: string[] }) => {
@@ -132,6 +136,13 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
               loading={loading}
               error={error}
               needsF2Banner={!preview.hasF2Predictions}
+              f2AllocationHint={
+                !preview.hasF2Predictions && preview.totalTaskCount > 0
+                  ? `${preview.allocatedTaskCount} of ${preview.totalTaskCount} tasks have allocations — finish F2 to enable generation.`
+                  : !preview.hasF2Predictions
+                    ? 'Run F2 allocation for all tasks before generating roles.'
+                    : undefined
+              }
               patternSummary={preview.patternSummary}
               previewRows={preview.previewRows}
               emergentHint={preview.emergentHint}
@@ -186,7 +197,7 @@ export function FutureRoles({ onBack, onProceedToF4, onGoToF2, engagementId: eng
     }
   };
 
-  if (pipelineLoading && (currentScreen === 'pre-run' || currentScreen === 'generating')) {
+  if (pipelineLoading && currentScreen === 'pre-run') {
     return <PipelineCacheLoading />;
   }
 

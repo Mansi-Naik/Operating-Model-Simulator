@@ -12,6 +12,7 @@ interface F3_0_PreRunProps {
   loading?: boolean;
   error?: string | null;
   needsF2Banner?: boolean;
+  f2AllocationHint?: string;
   patternSummary?: string;
   previewRows?: F3_0_PreRunPreviewRow[];
   emergentHint?: string;
@@ -24,6 +25,7 @@ export function F3_0_PreRun({
   loading,
   error,
   needsF2Banner,
+  f2AllocationHint,
   patternSummary,
   previewRows = [],
   emergentHint,
@@ -139,11 +141,17 @@ export function F3_0_PreRun({
           <span>Estimated generation time: ~30 seconds</span>
         </div>
 
+        {!canGenerate && f2AllocationHint ? (
+          <p className="text-[14px] text-[#494949] text-center mb-4">{f2AllocationHint}</p>
+        ) : null}
+
         <div className="flex justify-center">
           <button
+            type="button"
             onClick={onGenerate}
             disabled={!canGenerate}
-            className="h-12 px-6 bg-[#FD4E59] text-white text-[15px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2 disabled:opacity-50 disabled:pointer-events-none"
+            title={!canGenerate ? f2AllocationHint ?? 'Complete F2 before generating roles' : undefined}
+            className="h-12 px-6 bg-[#FD4E59] text-white text-[15px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Sparkles className="w-5 h-5" />
             Generate redesigns

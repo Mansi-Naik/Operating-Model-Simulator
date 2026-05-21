@@ -72,6 +72,9 @@ export interface F3PreRunPreview {
   previewRows: F3PreRunPreviewRow[];
   emergentHint: string;
   hasF2Predictions: boolean;
+  /** Tasks with an explicit user or AI allocation (not preview defaults). */
+  allocatedTaskCount: number;
+  totalTaskCount: number;
   roleNamesToRedesign: string[];
 }
 
@@ -84,10 +87,17 @@ export function computeF3PreRunPreview(
 ): F3PreRunPreview {
   const list = Array.isArray(tasks) ? tasks : [];
   const hasF2Predictions = tasksHaveF2Predictions(list);
+  const totalTaskCount = list.length;
+  const allocatedTaskCount = list.filter(
+    (t) => getFinalAllocation(t as Record<string, unknown>).length > 0,
+  ).length;
 
   const hierarchy = getHierarchy(engagement);
+  const tasksForPreview = hasF2Predictions
+    ? list
+    : list.filter((t) => getFinalAllocation(t as Record<string, unknown>).length > 0);
   const aggregates = aggregateByRole(
-    list as Record<string, unknown>[],
+    tasksForPreview as Record<string, unknown>[],
     hierarchy as Record<string, unknown>[],
   );
 
@@ -99,7 +109,13 @@ export function computeF3PreRunPreview(
     counts[key] = (counts[key] ?? 0) + 1;
   }
 
-  const patternSummary = formatPatternCountSentence(counts);
+  let patternSummary = formatPatternCountSentence(counts);
+  if (!hasF2Predictions && totalTaskCount > 0) {
+    const remaining = totalTaskCount - allocatedTaskCount;
+    if (remaining > 0) {
+      patternSummary = `${patternSummary} — ${remaining} of ${totalTaskCount} tasks still need F2 allocations.`;
+    }
+  }
 
   const previewRows: F3PreRunPreviewRow[] = active.map((a) => {
     const p = String(a.pattern ?? '');
@@ -135,6 +151,8 @@ export function computeF3PreRunPreview(
     previewRows,
     emergentHint,
     hasF2Predictions,
+    allocatedTaskCount,
+    totalTaskCount,
     roleNamesToRedesign,
   };
 }
