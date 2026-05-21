@@ -1,6 +1,6 @@
 import callGemini, { geminiLogExtras } from './_lib/geminiClient.js'
 import { applyCorsHeaders, resolveAllowedCorsOrigin } from '../src/lib/apiCors.js'
-import { matchCapabilities } from '../src/lib/capabilityLibrary.js'
+import { inferMissingFields, matchCapabilities } from '../src/lib/capabilityLibrary.js'
 import { buildAllocationPrompt } from '../src/lib/promptTemplates.js'
 import { createSupabaseAdmin } from '../src/lib/supabaseAdmin.js'
 import { calibrateConfidence } from '../src/lib/confidenceCalibration.js'
@@ -292,7 +292,7 @@ export default async function handler(req, res) {
       return
     }
 
-    const candidates = matchCapabilities({
+    const enrichedTaskForMatching = inferMissingFields({
       task_name: taskRow.task_name,
       input_data_type: taskRow.input_data_type,
       task_type: taskRow.task_type,
@@ -301,10 +301,20 @@ export default async function handler(req, res) {
       data_logged: taskRow.data_logged,
     })
 
+    const candidates = matchCapabilities(enrichedTaskForMatching)
+
+    const taskForPrompt = {
+      ...taskRow,
+      input_data_type: enrichedTaskForMatching.input_data_type,
+      task_type: enrichedTaskForMatching.task_type,
+      consequence_of_error: enrichedTaskForMatching.consequence_of_error,
+      data_logged: enrichedTaskForMatching.data_logged,
+    }
+
     const engagementContext = engagementRowToContext(
       /** @type {Record<string, unknown>} */ (engagementRow),
     )
-    promptText = buildAllocationPrompt(taskRow, candidates, engagementContext)
+    promptText = buildAllocationPrompt(taskForPrompt, candidates, engagementContext)
 
     geminiMeta = await callGemini(promptText, {
       feature: 'f2_allocation',
