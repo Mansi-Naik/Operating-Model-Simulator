@@ -3,6 +3,29 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { tasksFullyAllocated, tasksMissingAiAllocation } from '../../../../lib/pipelineCacheUtils';
 
+/** Read fetch body once (avoids "body stream already read" from json() then text()). */
+async function readFetchBodyAsJson(response: Response): Promise<{
+  data: Record<string, unknown> | null;
+  errorMessage: string;
+}> {
+  const responseText = await response.text();
+  if (!responseText.trim()) {
+    return { data: null, errorMessage: 'No response body' };
+  }
+  try {
+    const data = JSON.parse(responseText) as Record<string, unknown>;
+    const errorMessage =
+      typeof data.error === 'string'
+        ? data.error
+        : typeof data.message === 'string'
+          ? data.message
+          : responseText;
+    return { data, errorMessage };
+  } catch {
+    return { data: { error: responseText }, errorMessage: responseText };
+  }
+}
+
 interface F2_1_GenerationProps {
   onCancel: () => void;
   onBack?: () => void;
@@ -150,26 +173,61 @@ export function F2_1_Generation({
           body: JSON.stringify({ engagementId: activeEngagementId }),
           signal: abortRef.current.signal,
         });
-        try {
-          responseBody = (await response.json()) as Record<string, unknown>;
-        } catch {
-          responseBody = { error: await response.text() };
-        }
+
+        const { data, errorMessage } = await readFetchBodyAsJson(response);
+        responseBody = data;
 
         if (!response.ok) {
-          const errPart = responseBody?.error != null ? String(responseBody.error) : '';
-          const detPart = responseBody?.details != null ? String(responseBody.details) : '';
-          const combined = [errPart, detPart].filter(Boolean).join(' — ');
+          const processedSoFar = Array.isArray(data?.processedTaskIds)
+            ? (data.processedTaskIds as string[]).length
+            : 0;
+          const failedAt = processedSoFar + 1;
+          const detPart = data?.details != null ? String(data.details) : '';
+
+          if (response.status === 429) {
+            setGenerationError(
+              [
+                `Rate limit hit on task ${failedAt} of ${queueLength}.`,
+                processedSoFar > 0
+                  ? `${processedSoFar} task${processedSoFar === 1 ? '' : 's'} completed successfully and are saved.`
+                  : 'No tasks were saved in this run.',
+                'Wait a minute and click Re-run or "Allocate remaining" on the matrix to resume.',
+              ].join(' '),
+            );
+            if (processedSoFar > 0) {
+              await onCompleteRef.current?.({
+                processedTaskIds: data?.processedTaskIds as string[],
+                failedTaskIds: Array.isArray(data?.failedTaskIds)
+                  ? (data.failedTaskIds as string[])
+                  : [],
+                total: allRows.length,
+              });
+            }
+            return;
+          }
+
+          const combined = [errorMessage, detPart].filter(Boolean).join(' — ');
           setGenerationError(
             [
-              `Allocation batch failed (HTTP ${response.status}).`,
-              combined || 'No response body',
+              `F2 prediction failed (HTTP ${response.status}): ${combined}`,
+              processedSoFar > 0
+                ? `${processedSoFar} of ${queueLength} tasks were saved before this error. Use "Allocate remaining" on the matrix.`
+                : '',
               '',
               'Use `npm run dev:vercel` so `/api` is available. Check DevTools → Network → predict-allocation-batch.',
             ]
               .filter(Boolean)
               .join('\n'),
           );
+          if (processedSoFar > 0) {
+            await onCompleteRef.current?.({
+              processedTaskIds: data?.processedTaskIds as string[],
+              failedTaskIds: Array.isArray(data?.failedTaskIds)
+                ? (data.failedTaskIds as string[])
+                : [],
+              total: allRows.length,
+            });
+          }
           return;
         }
       } catch (err) {
@@ -211,10 +269,14 @@ export function F2_1_Generation({
           failures[0] && typeof failures[0] === 'object'
             ? (failures[0] as Record<string, unknown>)
             : null;
+        const firstErr = first?.error != null ? String(first.error) : '';
+        const rateLimited = /429|rate limit|rpm|quota/i.test(firstErr);
         setGenerationError(
           [
-            `Allocation failed for all ${rows.length} task(s) in this run.`,
-            first?.error != null ? `First error: ${String(first.error)}` : '',
+            rateLimited
+              ? `Rate limit hit during allocation (task 1 of ${rows.length}). Wait and use "Allocate remaining" on the matrix.`
+              : `Allocation failed for all ${rows.length} task(s) in this run.`,
+            firstErr ? `First error: ${firstErr}` : '',
             '',
             'Check DevTools → Network → predict-allocation-batch for details.',
           ]
