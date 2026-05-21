@@ -7,16 +7,27 @@ interface F2_1_GenerationProps {
   onCancel: () => void;
   onBack?: () => void;
   engagementId?: string | null;
+  generationRunKey?: number;
   onComplete?: (result: { processedTaskIds: string[]; failedTaskIds: string[]; total: number }) => void | Promise<void>;
 }
 
-export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: F2_1_GenerationProps) {
+export function F2_1_Generation({
+  onCancel,
+  onBack,
+  engagementId,
+  generationRunKey = 0,
+  onComplete,
+}: F2_1_GenerationProps) {
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
   const activeEngagementId = engagementId ?? engagementIdFromUrl;
   const { loadEngagement } = useEngagement(activeEngagementId);
   const cancelRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const onCancelRef = useRef(onCancel);
+  const onCompleteRef = useRef(onComplete);
+  onCancelRef.current = onCancel;
+  onCompleteRef.current = onComplete;
 
   const [totalTasks, setTotalTasks] = useState(0);
   const [completedTasks, setCompletedTasks] = useState(0);
@@ -44,8 +55,10 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
       },
       {
         label: currentTaskName
-          ? `Predicting allocation for: ${currentTaskName}`
-          : 'Predicting allocation for: awaiting first task',
+          ? `Predicting allocations: ${currentTaskName}`
+          : totalTasks > 0
+            ? 'Predicting allocations for all tasks…'
+            : 'Predicting allocations',
         meta: '',
         status: totalTasks > 0 && completedTasks < totalTasks ? 'active' : totalTasks > 0 ? 'complete' : 'pending',
       },
@@ -65,15 +78,25 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
 
   useEffect(() => {
     cancelRef.current = false;
+    let progressTimer: ReturnType<typeof setInterval> | null = null;
+
     const run = async () => {
       setGenerationError(null);
+      setConstraintsDone(false);
+      setCapabilitiesDone(false);
+      setCalibrationDone(false);
+      setValidationDone(false);
+      setCurrentTaskName('');
+
       if (!activeEngagementId) {
         console.error('[F2.1] Missing engagement id');
-        onCancel();
+        onCancelRef.current();
         return;
       }
 
       const loaded = await loadEngagement(activeEngagementId);
+      if (cancelRef.current) return;
+
       const allRows = Array.isArray(loaded?.tasks) ? loaded.tasks : [];
       if (!allRows || allRows.length === 0) {
         console.warn('[F2.1] No tasks to process. Aborting loop.');
@@ -91,7 +114,7 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
         setCapabilitiesDone(true);
         setCalibrationDone(true);
         setValidationDone(true);
-        await onComplete?.({ processedTaskIds: allIds, failedTaskIds: [], total: allRows.length });
+        await onCompleteRef.current?.({ processedTaskIds: allIds, failedTaskIds: [], total: allRows.length });
         return;
       }
 
@@ -109,110 +132,103 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
 
       setTotalTasks(rows.length);
       setCompletedTasks(0);
+      setConstraintsDone(true);
+      setCapabilitiesDone(true);
+      setCurrentTaskName(`${rows.length} task${rows.length === 1 ? '' : 's'} (server-paced batch)`);
 
-      const processedTaskIds = [];
-      const failedTaskIds = [];
-      /** First failed request detail (same root cause often repeats for every task). */
-      let firstFailureSummary: string | null = null;
+      const queueLength = rows.length;
+      progressTimer = setInterval(() => {
+        setCompletedTasks((prev) => Math.min(prev + 1, Math.max(0, queueLength - 1)));
+      }, 2500);
 
-      for (let i = 0; i < rows.length; i += 1) {
-        if (cancelRef.current) return;
-        const task = rows[i];
-        const taskId = typeof task?.id === 'string' ? task.id : null;
-        const taskName = (task?.task_name ?? '').trim() || '(unnamed task)';
-        setCurrentTaskName(taskName);
-
-        if (!taskId) {
-          console.error('[F2.1] Missing task id for row:', task);
-          failedTaskIds.push(String(task?.task_id ?? `index-${i}`));
-          setCompletedTasks(i + 1);
-          continue;
+      abortRef.current = new AbortController();
+      let responseBody: Record<string, unknown> | null = null;
+      try {
+        const response = await fetch('/api/predict-allocation-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ engagementId: activeEngagementId }),
+          signal: abortRef.current.signal,
+        });
+        try {
+          responseBody = (await response.json()) as Record<string, unknown>;
+        } catch {
+          responseBody = { error: await response.text() };
         }
 
-        abortRef.current = new AbortController();
-        try {
-          const response = await fetch('/api/predict-allocation', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ engagementId: activeEngagementId, taskId }),
-            signal: abortRef.current.signal,
-          });
-          let responseBody = null;
-          try {
-            responseBody = await response.clone().json();
-          } catch {
-            responseBody = await response.text();
-          }
-          if (!response.ok) {
-            console.error('[F2.1] /api/predict-allocation failed:', { taskId, status: response.status, responseBody });
-            if (!firstFailureSummary) {
-              const obj =
-                responseBody && typeof responseBody === 'object' && !Array.isArray(responseBody)
-                  ? (responseBody as Record<string, unknown>)
-                  : null;
-              const errPart = obj?.error != null ? String(obj.error) : null;
-              const detPart = obj?.details != null ? String(obj.details) : null;
-              const combined = [errPart, detPart].filter(Boolean).join(' — ');
-              const fallback =
-                typeof responseBody === 'string'
-                  ? responseBody.slice(0, 400)
-                  : combined || JSON.stringify(responseBody).slice(0, 400);
-              firstFailureSummary = `HTTP ${response.status}: ${fallback || 'No response body'}`;
-            }
-            failedTaskIds.push(taskId);
-          } else {
-            processedTaskIds.push(taskId);
-          }
-        } catch (err) {
-          if (!cancelRef.current) {
-            console.error('[F2.1] Caught error:', err);
-            console.error('[F2.1] Task prediction error:', { taskId, err });
-            if (!firstFailureSummary) {
-              const msg = err instanceof Error ? err.message : String(err);
-              const networkHint =
-                /failed to fetch|networkerror|load failed|econnrefused|connection refused/i.test(msg)
-                  ? ' Vite proxies `/api/*` to http://localhost:3000 — nothing was listening there, or use `npm run dev:vercel` so `/api` runs on the same origin.'
-                  : '';
-              firstFailureSummary = `${msg}.${networkHint}`;
-            }
-            failedTaskIds.push(taskId);
-          }
-        } finally {
-          abortRef.current = null;
-          setCompletedTasks(i + 1);
-          if (i === 0) {
-            setConstraintsDone(true);
-            setCapabilitiesDone(true);
-          }
+        if (!response.ok) {
+          const errPart = responseBody?.error != null ? String(responseBody.error) : '';
+          const detPart = responseBody?.details != null ? String(responseBody.details) : '';
+          const combined = [errPart, detPart].filter(Boolean).join(' — ');
+          setGenerationError(
+            [
+              `Allocation batch failed (HTTP ${response.status}).`,
+              combined || 'No response body',
+              '',
+              'Use `npm run dev:vercel` so `/api` is available. Check DevTools → Network → predict-allocation-batch.',
+            ]
+              .filter(Boolean)
+              .join('\n'),
+          );
+          return;
+        }
+      } catch (err) {
+        if (!cancelRef.current) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const networkHint =
+            /failed to fetch|networkerror|load failed|econnrefused|connection refused/i.test(msg)
+              ? ' Use `npm run dev:vercel` so `/api` runs on the same origin.'
+              : '';
+          setGenerationError(`${msg}.${networkHint}`);
+        }
+        return;
+      } finally {
+        abortRef.current = null;
+        if (progressTimer) {
+          clearInterval(progressTimer);
+          progressTimer = null;
         }
       }
 
       if (cancelRef.current) return;
+
+      const processedTaskIds = Array.isArray(responseBody?.processedTaskIds)
+        ? (responseBody.processedTaskIds as string[])
+        : [];
+      const failedTaskIds = Array.isArray(responseBody?.failedTaskIds)
+        ? (responseBody.failedTaskIds as string[])
+        : [];
+      const total =
+        typeof responseBody?.total === 'number' ? responseBody.total : allRows.length;
+
+      setCompletedTasks(rows.length);
       setCalibrationDone(true);
       setValidationDone(true);
 
-      if (processedTaskIds.length === 0) {
+      if (processedTaskIds.length === 0 && failedTaskIds.length > 0) {
+        const failures = Array.isArray(responseBody?.failures) ? responseBody.failures : [];
+        const first =
+          failures[0] && typeof failures[0] === 'object'
+            ? (failures[0] as Record<string, unknown>)
+            : null;
         setGenerationError(
-          failedTaskIds.length > 0
-            ? [
-                `Allocation failed for all ${rows.length} task(s) in this run.`,
-                firstFailureSummary ? `First error: ${firstFailureSummary}` : '',
-                '',
-                'Gemini key issues usually show as HTTP 500 with "Missing GEMINI_API_KEY" or a model error in the response. If you only run `npm run dev` (Vite), the UI calls /api which must be served — prefer `npm run dev:vercel`, or run another process on port 3000 (Vite proxies /api there).',
-                'Open DevTools → Network → predict-allocation → Response to see the exact JSON error.',
-              ]
-                .filter(Boolean)
-                .join('\n')
-            : 'No allocation results were saved.',
+          [
+            `Allocation failed for all ${rows.length} task(s) in this run.`,
+            first?.error != null ? `First error: ${String(first.error)}` : '',
+            '',
+            'Check DevTools → Network → predict-allocation-batch for details.',
+          ]
+            .filter(Boolean)
+            .join('\n'),
         );
         return;
       }
 
       if (failedTaskIds.length > 0) {
-        console.warn('[F2.1] Partial allocation failures:', { failedTaskIds });
+        console.warn('[F2.1] Partial allocation failures:', { failedTaskIds, responseBody });
       }
 
-      await onComplete?.({ processedTaskIds, failedTaskIds, total: allRows.length });
+      await onCompleteRef.current?.({ processedTaskIds, failedTaskIds, total });
     };
 
     void run();
@@ -220,8 +236,9 @@ export function F2_1_Generation({ onCancel, onBack, engagementId, onComplete }: 
     return () => {
       cancelRef.current = true;
       abortRef.current?.abort();
+      if (progressTimer) clearInterval(progressTimer);
     };
-  }, [activeEngagementId, loadEngagement, onCancel, onComplete]);
+  }, [activeEngagementId, generationRunKey, loadEngagement]);
 
   const handleCancel = () => {
     cancelRef.current = true;

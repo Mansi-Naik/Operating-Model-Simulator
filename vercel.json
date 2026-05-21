@@ -23,6 +23,12 @@
     },
     "api/generate-phase-narratives.js": {
       "maxDuration": 60
+    },
+    "api/predict-allocation.js": {
+      "maxDuration": 60
+    },
+    "api/predict-allocation-batch.js": {
+      "maxDuration": 300
     }
   }
 }

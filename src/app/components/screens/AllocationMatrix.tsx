@@ -40,6 +40,7 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
     engagementId: activeEngagementId,
     tasks: [],
   });
+  const [generationRunKey, setGenerationRunKey] = useState(0);
   const [generationResult, setGenerationResult] = useState<{
     processedTaskIds: string[];
     failedTaskIds: string[];
@@ -62,12 +63,37 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
       : null;
   }, [engagement?.intake_data]);
 
+  const handleGenerationComplete = useCallback(
+    async (result: { processedTaskIds: string[]; failedTaskIds: string[]; total: number }) => {
+      setGenerationResult(result);
+      await refreshPipeline();
+      if (activeEngagementId) {
+        await loadEngagement(activeEngagementId);
+      }
+      if (result.failedTaskIds.length > 0) {
+        toast.warning(
+          `${result.failedTaskIds.length} task(s) could not be allocated. Click "Allocate remaining" on the matrix or re-run F2.`,
+        );
+      } else if (result.processedTaskIds.length > 0) {
+        const filled = result.processedTaskIds.length;
+        toast.success(
+          filled === result.total
+            ? `Allocation complete for all ${result.total} tasks.`
+            : `Saved allocations for ${filled} task${filled === 1 ? '' : 's'}.`,
+        );
+      }
+      setCurrentScreen('matrix-view');
+    },
+    [activeEngagementId, loadEngagement, refreshPipeline],
+  );
+
   const startAllocationGeneration = (sourceTasks: Record<string, unknown>[]) => {
     setGenerationInput({
       engagementId: activeEngagementId,
       tasks: sourceTasks,
     });
     setGenerationResult(null);
+    setGenerationRunKey((k) => k + 1);
     setCurrentScreen('generating');
   };
 
@@ -118,6 +144,7 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
       engagementId: activeEngagementId,
       tasks: sourceTasks,
     });
+    setGenerationRunKey((k) => k + 1);
     setCurrentScreen('generating');
   }, [activeEngagementId, loadEngagement, refreshPipeline]);
 
@@ -143,26 +170,12 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
       case 'generating':
         return (
           <F2_1_Generation
+            key={generationRunKey}
+            generationRunKey={generationRunKey}
             onCancel={handleCancel}
             onBack={() => setCurrentScreen('pre-run')}
             engagementId={generationInput.engagementId}
-            onComplete={async (result) => {
-              setGenerationResult(result);
-              await refreshPipeline();
-              if (result.failedTaskIds.length > 0) {
-                toast.warning(
-                  `${result.failedTaskIds.length} task(s) could not be allocated. Use "Allocate remaining" on the matrix or check DevTools → Network.`,
-                );
-              } else if (result.processedTaskIds.length > 0) {
-                const filled = result.processedTaskIds.length;
-                toast.success(
-                  filled === result.total
-                    ? `Allocation complete for all ${result.total} tasks.`
-                    : `Saved allocations for ${filled} task${filled === 1 ? '' : 's'}.`,
-                );
-              }
-              setCurrentScreen('matrix-view');
-            }}
+            onComplete={handleGenerationComplete}
           />
         );
       case 'matrix-view':
