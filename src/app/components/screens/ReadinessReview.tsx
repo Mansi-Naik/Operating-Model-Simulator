@@ -1,6 +1,8 @@
-import { useEffect, useMemo } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
 import { useEngagement } from '../../../hooks/useEngagement';
+import { getSourceDocumentTextFromMetadata } from '../../../lib/extractTaskFieldsNormalize';
 import { computeReadiness } from '../../../lib/readinessScoring';
 import {
   formatContractPeriodSummary,
@@ -18,7 +20,15 @@ interface ReadinessReviewProps {
 export function ReadinessReview({ onProceed, onBack }: ReadinessReviewProps) {
   const engagementId =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
-  const { engagement, tasks, loading, error, updateEngagement } = useEngagement(engagementId);
+  const { engagement, tasks, loading, error, updateEngagement, loadEngagement } = useEngagement(engagementId);
+  const [reExtractOpen, setReExtractOpen] = useState(false);
+  const [reExtractBusy, setReExtractBusy] = useState(false);
+
+  const showReExtractButton = Boolean(engagement?.extraction_metadata);
+  const hasSourceDocumentText = useMemo(
+    () => getSourceDocumentTextFromMetadata(engagement?.extraction_metadata) != null,
+    [engagement?.extraction_metadata],
+  );
   const result = useMemo(() => computeReadiness(engagement, tasks), [engagement, tasks]);
   const score = result.score;
   const band = result.band;
@@ -91,6 +101,37 @@ export function ReadinessReview({ onProceed, onBack }: ReadinessReviewProps) {
       ? 'Your context is partially complete. You can proceed with caveats.'
       : 'Your context is incomplete. Please address key gaps before proceeding.';
 
+  const handleReExtractConfirm = async () => {
+    if (!engagementId) return;
+    setReExtractBusy(true);
+    try {
+      const res = await fetch('/api/re-extract-task-fields', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engagement_id: engagementId }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        tasks_updated?: number;
+        errors?: string[];
+      };
+      if (!res.ok) {
+        toast.error(body.error ?? `Re-extraction failed (${res.status})`);
+        return;
+      }
+      await loadEngagement(engagementId);
+      const n = typeof body.tasks_updated === 'number' ? body.tasks_updated : 0;
+      toast.success(
+        `Task fields updated (${n} task${n === 1 ? '' : 's'}). You may want to re-run F2 to see updated allocations.`,
+      );
+      setReExtractOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Re-extraction failed');
+    } finally {
+      setReExtractBusy(false);
+    }
+  };
+
   return (
     <div className="p-10">
       {onBack && (
@@ -102,10 +143,71 @@ export function ReadinessReview({ onProceed, onBack }: ReadinessReviewProps) {
           Back
         </button>
       )}
+
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <h1 className="text-[26px] font-bold text-[#161916]">Readiness Review</h1>
+        {showReExtractButton ? (
+          <button
+            type="button"
+            onClick={() => setReExtractOpen(true)}
+            className="inline-flex items-center gap-2 h-9 px-4 border border-[#161916]/30 text-[#494949] text-[13px] font-medium rounded-lg hover:bg-[#161916]/5 shrink-0"
+            title={
+              hasSourceDocumentText
+                ? 'Re-run classifier fields from the original document'
+                : 'Original document text was not stored for this engagement'
+            }
+          >
+            <RefreshCw className="w-4 h-4" />
+            Re-extract from document
+          </button>
+        ) : null}
+      </div>
+
+      {reExtractOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-w-md w-full rounded-lg bg-white p-6 shadow-lg border border-[#161916]/10">
+            <h2 className="text-[18px] font-semibold text-[#161916] mb-3">Re-extract task fields?</h2>
+            <p className="text-[14px] text-[#494949] mb-4 leading-relaxed">
+              This will use 1 API call to re-process the document and update task fields like data type,
+              consequence, and regulatory flags.
+              <br />
+              <br />
+              Your task volumes, names, and roles will NOT change. Only the classification fields will be
+              updated.
+              <br />
+              <br />
+              Continue?
+            </p>
+            {!hasSourceDocumentText ? (
+              <p className="text-[13px] text-[#FD4E59] mb-4">
+                Original document not available for re-extraction. Please re-upload the document via F1.0.
+              </p>
+            ) : null}
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setReExtractOpen(false)}
+                disabled={reExtractBusy}
+                className="h-10 px-5 border border-[#161916]/30 text-[#494949] text-[14px] rounded-lg hover:bg-[#161916]/5"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleReExtractConfirm()}
+                disabled={reExtractBusy || !hasSourceDocumentText}
+                className="h-10 px-5 bg-[#FD4E59] text-white text-[14px] font-semibold rounded-lg hover:bg-[#FD4E59]/90 disabled:opacity-60"
+              >
+                {reExtractBusy ? 'Re-extracting…' : 'Re-extract'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-[55%,45%] gap-8">
         {/* Left Column */}
         <div>
-          <h1 className="text-[26px] font-bold text-[#161916] mb-4">Readiness Review</h1>
           <div className={`inline-flex px-4 py-1.5 border text-[13px] font-semibold rounded-full mb-6 ${bandClass}`}>
             Status: {band.toUpperCase()}
           </div>
