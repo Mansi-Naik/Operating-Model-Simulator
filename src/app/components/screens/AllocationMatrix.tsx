@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
 import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
 import { clearF2SavedState } from '../../../lib/pipelineRerunClear';
+import { tasksHaveAiAllocations } from '../../../lib/pipelineCacheUtils';
 import { F2_0_PreRun } from './allocation/F2_0_PreRun';
 import { F2_1_Generation } from './allocation/F2_1_Generation';
 import { F2_2_MatrixView } from './allocation/F2_2_MatrixView';
@@ -64,11 +65,11 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
 
   const handleGenerate = (appetite: string) => {
     void appetite;
-    if (hasCachedResults) {
+    const sourceTasks = Array.isArray(tasks) ? tasks : [];
+    if (hasCachedResults && tasksHaveAiAllocations(sourceTasks)) {
       setCurrentScreen('matrix-view');
       return;
     }
-    const sourceTasks = Array.isArray(tasks) ? tasks : [];
     setGenerationInput({
       engagementId: activeEngagementId,
       tasks: sourceTasks,
@@ -91,10 +92,15 @@ export function AllocationMatrix({ onBack, onProceedToF3, engagementId: engageme
       throw new Error('Missing engagement');
     }
     await clearF2SavedState(activeEngagementId);
-    await loadEngagement(activeEngagementId);
+    const loaded = await loadEngagement(activeEngagementId);
     await refreshPipeline();
     setGenerationResult(null);
-    setCurrentScreen('pre-run');
+    const sourceTasks = Array.isArray(loaded?.tasks) ? loaded.tasks : [];
+    setGenerationInput({
+      engagementId: activeEngagementId,
+      tasks: sourceTasks,
+    });
+    setCurrentScreen('generating');
   }, [activeEngagementId, loadEngagement, refreshPipeline]);
 
   const renderScreen = () => {
