@@ -25,6 +25,10 @@ intake_data: {
   engagement: {
     client_name: string | null,
     domain: "safety_security" | "customer_service" | "finance_ops" | "hr_ops" | "sales_ops" | "supply_chain" | "other" | null,
+    sub_function: string | null,
+    contract_start_date: string | null (ISO date YYYY-MM-DD),
+    contract_end_date: string | null (ISO date YYYY-MM-DD),
+    competitive_context: "incumbent_stable" | "incumbent_threatened" | "challenger" | "new_client" | "not_specified" | null,
     geography: array of strings | null,
     languages: array of strings | null,
     channels: array of strings | null,
@@ -85,9 +89,68 @@ intake_data: {
     prefer_upskilling: boolean | null,
     include_emergent_roles: boolean | null,
     currency: "USD" | "INR" | "EUR" | "GBP" | null,
-    months_to_steady_state: number | null
+    months_to_steady_state: number | null,
+    margin_profile: "low" | "medium" | "high" | "not_disclosed" | null,
+    expected_implementation_months: number | null,
+    billing_model: {
+      type: "transactional" | "hourly" | "fte_based" | "fixed" | "not_specified",
+      unit_cost: number | null,
+      unit_cost_variance_pct: number | null,
+      hourly_rate: number | null,
+      monthly_per_fte: number | null,
+      fixed_monthly_value: number | null
+    }
   }
 }
+
+SECTION C.0 — EXTRACT THESE PHASE A AND PHASE B FIELDS WITH HIGH RECALL
+
+SUB_FUNCTION
+Identify the specific sub-function within the broader domain. Look for explicit statements like "sub-function: X" or context clues. Valid values depend on domain (domain enum safety_security = Trust & Safety):
+- safety_security (Trust & Safety): "Content Moderation", "Fraud", "AML/KYC", "Identity Verification", "Risk Operations"
+- customer_service: "Retail Banking", "Telecom", "E-commerce", "Healthcare", "Insurance", "B2B SaaS", "Hospitality"
+- finance_ops: "AP/AR", "Reconciliation", "Treasury", "Tax", "Financial Reporting", "Procurement"
+- hr_ops: "Recruiting Ops", "Benefits Admin", "Payroll", "Employee Lifecycle", "L&D Ops"
+- sales_ops: "Lead Qualification", "CRM Admin", "Quote-to-Cash", "Deal Desk", "Sales Reporting"
+- supply_chain: "Order Mgmt", "Logistics", "Inventory", "Procurement", "Vendor Mgmt"
+
+If domain doesn't fit any sub-function category or document is ambiguous, set to null.
+
+CONTRACT_START_DATE and CONTRACT_END_DATE
+Look for explicit phrases like "contract runs from X to Y", "contract start date", "contract end date", "engagement period". Convert any date format to ISO 8601 (YYYY-MM-DD). If only one date is mentioned or dates are absent, leave the missing one as null.
+
+COMPETITIVE_CONTEXT
+Look for phrases indicating Genpact's competitive position. Map phrases to enum values:
+- "incumbent_stable": document says "stable incumbent", "stable renewal", "incumbent with no competitive threat"
+- "incumbent_threatened": document says "incumbent under threat", "incumbent at risk", "competitor pitching aggressively", "losing ground"
+- "challenger": document says "challenger", "pitching to displace incumbent", "expanding share against incumbent"
+- "new_client": document says "new client", "no incumbent", "green field engagement"
+- "not_specified": document doesn't mention competitive position
+
+MARGIN_PROFILE
+Look for phrases like "margin is X%", "low/medium/high margin", "gross margin Y%". Map to:
+- "low": margin <10% or explicitly stated as "low margin"
+- "medium": margin 10-20% or "medium margin"
+- "high": margin >20% or "high margin"
+- "not_disclosed": not mentioned in document
+
+EXPECTED_IMPLEMENTATION_MONTHS
+Look for phrases like "client expects X-month implementation", "transition within X months", "rollout within Y months". Extract the NUMBER only. If not mentioned, set to null.
+
+BILLING_MODEL
+Look for explicit billing structure descriptions. Identify the type first, then extract sub-fields:
+- If document mentions "transactional", "per-unit", "$X per transaction/item/contact":
+  type = "transactional", unit_cost = dollar amount per unit, unit_cost_variance_pct = variance if mentioned (e.g. "±10%")
+- If document mentions "hourly", "per-hour billing", "$X per hour":
+  type = "hourly", hourly_rate = dollar amount per hour
+- If document mentions "FTE-based", "per-FTE", "$X per FTE per month":
+  type = "fte_based", monthly_per_fte = dollar amount per FTE per month (null if not specified)
+- If document mentions "fixed billing", "fixed monthly value", "flat rate of $X":
+  type = "fixed", fixed_monthly_value = monthly dollar amount
+- If billing model not mentioned: type = "not_specified", all sub-fields null
+
+CRITICAL: Read the document carefully for these fields. Many scoping documents have a dedicated section like "Phase A and Phase B Engagement Context" or "Engagement Context" that explicitly states these values. Always extract from explicit statements when present.
+
 tasks: array of {
   task_name: string — verbatim task name from document,
   role_performing: string — which role does this work,

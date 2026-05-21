@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { FileUp, ClipboardList, ArrowLeft, Loader2, X } from 'lucide-react';
+import { mergeExtractedIntakeData } from '../../../lib/intakeExtractionNormalize';
 import { supabase } from '../../../supabaseClient';
 
 interface ExtractionApiBody {
@@ -147,6 +148,10 @@ export function ModeSelector({
           : null,
     };
 
+    const intake_data = mergeExtractedIntakeData(
+      (extracted.intake_data ?? {}) as Record<string, unknown>,
+    );
+
     const { data: row, error: insErr } = await supabase
       .from('engagements')
       .insert([
@@ -156,7 +161,7 @@ export function ModeSelector({
           status: 'in_progress',
           intake_mode: 'upload',
           values_are_illustrative: true,
-          intake_data: extracted.intake_data,
+          intake_data,
           extraction_metadata,
         },
       ])

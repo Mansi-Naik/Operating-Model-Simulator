@@ -12,6 +12,7 @@ import {
   responseLooksTruncated,
   shouldRetryTaskSupplement,
 } from '../src/lib/extractionTaskCompleteness.js'
+import { mergeExtractedIntakeData } from '../src/lib/intakeExtractionNormalize.js'
 import { createSupabaseAdmin } from '../src/lib/supabaseAdmin.js'
 
 const FEATURE = 'f1_extraction'
@@ -236,7 +237,11 @@ function normalizeExtractionResponse(raw) {
     intake.engagement && typeof intake.engagement === 'object' && !Array.isArray(intake.engagement)
       ? intake.engagement
       : {}
-  const mergedIntake = {
+  const preferencesBase =
+    intake.preferences && typeof intake.preferences === 'object' && !Array.isArray(intake.preferences)
+      ? /** @type {Record<string, unknown>} */ (intake.preferences)
+      : {}
+  const mergedIntake = mergeExtractedIntakeData({
     ...intake,
     engagement: {
       goals: {},
@@ -263,11 +268,8 @@ function normalizeExtractionResponse(raw) {
       intake.kpis && typeof intake.kpis === 'object' && !Array.isArray(intake.kpis)
         ? { .../** @type {Record<string, unknown>} */ (intake.kpis) }
         : {},
-    preferences:
-      intake.preferences && typeof intake.preferences === 'object' && !Array.isArray(intake.preferences)
-        ? { .../** @type {Record<string, unknown>} */ (intake.preferences) }
-        : {},
-  }
+    preferences: preferencesBase,
+  })
 
   const ts = /** @type {Record<string, unknown>} */ (mergedIntake.tech_stack)
   if (!ts.current_systems || typeof ts.current_systems !== 'object') ts.current_systems = {}
