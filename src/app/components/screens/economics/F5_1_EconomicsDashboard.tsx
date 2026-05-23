@@ -242,6 +242,7 @@ export function F5_1_EconomicsDashboard({
   const [sensitivityNarrative, setSensitivityNarrative] = useState('');
   const [narrativePending, setNarrativePending] = useState(false);
   const narrativeFetchedRef = useRef(false);
+  const forceRecomputeRef = useRef(false);
   const loadPipeline = useCallback(async () => {
     if (!engagementIdFromUrl) {
       setPipelineError('Missing engagement');
@@ -286,10 +287,28 @@ export function F5_1_EconomicsDashboard({
 
   useEffect(() => {
     if (!engagementIdFromUrl || refreshKey === 0) return;
+    forceRecomputeRef.current = true;
+    setCachedF5Payload(null);
+    setAssumptionsUsed({});
+    setHasSavedEconomics(false);
     narrativeFetchedRef.current = false;
     setSensitivityNarrative('');
-    void loadEngagement(engagementIdFromUrl);
-  }, [engagementIdFromUrl, refreshKey, loadEngagement]);
+    void (async () => {
+      await loadEngagement(engagementIdFromUrl);
+      await loadPipeline();
+    })();
+  }, [engagementIdFromUrl, refreshKey, loadEngagement, loadPipeline]);
+
+  useEffect(() => {
+    if (!engagementIdFromUrl) return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void loadEngagement(engagementIdFromUrl);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [engagementIdFromUrl, loadEngagement]);
 
   const selectedVariant = useMemo(() => selectedVariantFromF4Pods(f4Pods), [f4Pods]);
   const selectedVariantName = typeof f4Pods?.selected_variant_name === 'string' ? f4Pods.selected_variant_name : '';
@@ -310,6 +329,14 @@ export function F5_1_EconomicsDashboard({
     () => f5IntakePreferencesSignature(engagement as Record<string, unknown> | null),
     [engagement],
   );
+
+  const intakeChangedSinceLastSave = useMemo(() => {
+    const cachedSig =
+      typeof cachedF5Payload?.intake_signature_at_compute === 'string'
+        ? cachedF5Payload.intake_signature_at_compute
+        : null;
+    return Boolean(cachedSig && intakeSignature && cachedSig !== intakeSignature);
+  }, [cachedF5Payload, intakeSignature]);
 
   /** F1 intake preferences override stale cached assumption snapshots (billing, margin, etc.). */
   const preferences = useMemo(
@@ -350,16 +377,18 @@ export function F5_1_EconomicsDashboard({
   );
 
   useEffect(() => {
-    if (!economicsResult || !engagementIdFromUrl || pipelineLoading) return;
+    if (!economicsResult || !engagementIdFromUrl || pipelineLoading || engagementLoading) return;
     let cancelled = false;
 
-    const cachedDeterministic = cachedF5Payload?.economics_result ?? null;
-    const deterministicChanged = !deterministicJsonEqual(cachedDeterministic, economicsResult);
+    const forceRecompute = forceRecomputeRef.current;
+    const cachedDeterministic = forceRecompute ? null : (cachedF5Payload?.economics_result ?? null);
+    const deterministicChanged =
+      forceRecompute || !deterministicJsonEqual(cachedDeterministic, economicsResult);
 
     if (!deterministicChanged) return;
 
     const payload = buildF5EconomicsPayload(
-      cachedF5Payload,
+      forceRecompute ? null : cachedF5Payload,
       economicsResult,
       preferences,
       selectedVariantName,
@@ -378,6 +407,7 @@ export function F5_1_EconomicsDashboard({
       if (result.pipelineId) setPipelineId(result.pipelineId);
       setCachedF5Payload(payload);
       setHasSavedEconomics(true);
+      forceRecomputeRef.current = false;
       console.log('[F5] Recomputed with new inputs — cache refreshed');
     })();
 
@@ -389,11 +419,13 @@ export function F5_1_EconomicsDashboard({
     economicsResult,
     engagementIdFromUrl,
     pipelineLoading,
+    engagementLoading,
     preferences,
     intakeSignature,
     selectedVariantName,
     sensitivityNarrative,
     cachedF5Payload,
+    refreshKey,
   ]);
 
   useEffect(() => {
@@ -577,6 +609,27 @@ export function F5_1_EconomicsDashboard({
             All values are indicative. Adjust assumptions in the panel to explore alternatives.
           </p>
         </div>
+
+        {intakeChangedSinceLastSave ? (
+          <div className="mb-6 bg-[#FFF0DC] border-l-[3px] border-[#FFAB28] rounded-lg p-4 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <AlertTriangle className="w-5 h-5 text-[#FFAB28] shrink-0" />
+              <span className="text-[14px] text-[#161916]">
+                F1 intake changed since this economics run was saved. Numbers below are recalculated — click Re-run to
+                refresh the saved snapshot and sensitivity narrative.
+              </span>
+            </div>
+            {onReRun ? (
+              <button
+                type="button"
+                onClick={() => void onReRun()}
+                className="h-9 px-4 shrink-0 bg-[#FFAB28] text-[#161916] text-[13px] font-semibold rounded-md hover:bg-[#FFAB28]/90"
+              >
+                Re-run
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {saveError ? (
           <div className="mb-6 text-[14px] text-[#FD4E59] border border-[#FD4E59]/30 rounded-lg p-4 bg-[#FCE4D6]/30">

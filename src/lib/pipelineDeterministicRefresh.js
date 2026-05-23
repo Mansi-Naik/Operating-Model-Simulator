@@ -116,6 +116,23 @@ export function f5IntakePreferencesSignature(engagement) {
     intake.preferences && typeof intake.preferences === 'object' && !Array.isArray(intake.preferences)
       ? /** @type {Record<string, unknown>} */ (intake.preferences)
       : {}
+  const eng =
+    intake.engagement && typeof intake.engagement === 'object' && !Array.isArray(intake.engagement)
+      ? /** @type {Record<string, unknown>} */ (intake.engagement)
+      : {}
+  const hierarchy = Array.isArray(intake.hierarchy) ? intake.hierarchy : []
+  const hierarchySig = hierarchy
+    .filter((row) => row && typeof row === 'object')
+    .map((row) => {
+      const r = /** @type {Record<string, unknown>} */ (row)
+      return {
+        role: r.role ?? r.role_name ?? r.name ?? null,
+        headcount: r.headcount ?? r.current_headcount ?? null,
+        cost: r.cost ?? r.cost_per_fte ?? r.monthly_cost_per_fte ?? null,
+      }
+    })
+    .sort((a, b) => String(a.role).localeCompare(String(b.role)))
+
   return stableStringify({
     billing_model: prefs.billing_model ?? null,
     margin_profile: prefs.margin_profile ?? null,
@@ -126,6 +143,11 @@ export function f5IntakePreferencesSignature(engagement) {
     currency: prefs.currency ?? null,
     automation_appetite: prefs.automation_appetite ?? null,
     risk_tolerance: prefs.risk_tolerance ?? null,
+    volume_per_day: eng.volume_per_day ?? intake.volume_per_day ?? null,
+    volume_per_month: eng.volume_per_month ?? intake.volume_per_month ?? null,
+    hierarchy: hierarchySig,
+    engagement_updated_at:
+      typeof engagement?.updated_at === 'string' ? engagement.updated_at : null,
   })
 }
 
