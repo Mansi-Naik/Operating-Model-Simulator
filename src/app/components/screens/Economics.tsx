@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Sparkles } from 'lucide-react';
+import { useEngagement } from '../../../hooks/useEngagement';
 import { useMountPipelineCacheRedirect, usePipelineCacheEntry } from '../../../hooks/usePipelineCacheEntry';
 import { clearF5SavedState } from '../../../lib/pipelineRerunClear';
 import { PipelineCacheLoading, PipelinePreRunGate } from '../PipelinePreRunGate';
@@ -25,6 +26,7 @@ export function Economics({ onBack, onProceedToF6, onMissingF4Selection, onGoToF
     'f5',
     engagementIdFromUrl,
   );
+  const { loadEngagement } = useEngagement(engagementIdFromUrl);
 
   const goToDashboard = useCallback(() => setView('dashboard'), []);
   useMountPipelineCacheRedirect('f5', engagementIdFromUrl, goToDashboard, {
@@ -36,10 +38,11 @@ export function Economics({ onBack, onProceedToF6, onMissingF4Selection, onGoToF
       throw new Error('Missing engagement');
     }
     await clearF5SavedState(engagementIdFromUrl);
+    await loadEngagement(engagementIdFromUrl);
     await refreshPipeline();
     setAssumptionVersion((v) => v + 1);
-    setView('pre-run');
-  }, [engagementIdFromUrl, refreshPipeline]);
+    setView('dashboard');
+  }, [engagementIdFromUrl, loadEngagement, refreshPipeline]);
 
   if (view === 'pre-run') {
     if (pipelineLoading) {

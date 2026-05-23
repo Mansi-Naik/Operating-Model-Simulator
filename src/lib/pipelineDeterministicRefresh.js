@@ -102,11 +102,40 @@ export async function persistPipelineColumn(engagementId, column, payload) {
 }
 
 /**
+ * Stable signature of F1 preference fields that drive F5 economics (billing, margin, transition).
+ *
+ * @param {Record<string, unknown> | null | undefined} engagement
+ * @returns {string}
+ */
+export function f5IntakePreferencesSignature(engagement) {
+  const intake =
+    engagement?.intake_data && typeof engagement.intake_data === 'object' && !Array.isArray(engagement.intake_data)
+      ? /** @type {Record<string, unknown>} */ (engagement.intake_data)
+      : {}
+  const prefs =
+    intake.preferences && typeof intake.preferences === 'object' && !Array.isArray(intake.preferences)
+      ? /** @type {Record<string, unknown>} */ (intake.preferences)
+      : {}
+  return stableStringify({
+    billing_model: prefs.billing_model ?? null,
+    margin_profile: prefs.margin_profile ?? null,
+    expected_implementation_months: prefs.expected_implementation_months ?? null,
+    months_to_steady_state: prefs.months_to_steady_state ?? null,
+    tech_build_cost_estimate: prefs.tech_build_cost_estimate ?? null,
+    retraining_cost_per_fte: prefs.retraining_cost_per_fte ?? null,
+    currency: prefs.currency ?? null,
+    automation_appetite: prefs.automation_appetite ?? null,
+    risk_tolerance: prefs.risk_tolerance ?? null,
+  })
+}
+
+/**
  * @param {Record<string, unknown> | null | undefined} cached
  * @param {Record<string, unknown>} freshResult
  * @param {Record<string, unknown>} assumptionsUsed
  * @param {string} selectedVariantName
  * @param {string | null | undefined} sensitivityNarrative
+ * @param {string | null | undefined} intakeSignature
  */
 export function buildF5EconomicsPayload(
   cached,
@@ -114,6 +143,7 @@ export function buildF5EconomicsPayload(
   assumptionsUsed,
   selectedVariantName,
   sensitivityNarrative,
+  intakeSignature = null,
 ) {
   const prev = cached && typeof cached === 'object' && !Array.isArray(cached) ? cached : {}
   const out = {
@@ -122,6 +152,7 @@ export function buildF5EconomicsPayload(
     assumptions_used: assumptionsUsed,
     economics_result: freshResult,
     computed_at: new Date().toISOString(),
+    intake_signature_at_compute: intakeSignature ?? null,
   }
   if (typeof sensitivityNarrative === 'string' && sensitivityNarrative.trim()) {
     out.sensitivity_narrative = sensitivityNarrative.trim()

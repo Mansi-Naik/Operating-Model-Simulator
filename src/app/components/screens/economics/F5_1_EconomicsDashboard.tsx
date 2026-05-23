@@ -7,6 +7,7 @@ import { runFullEconomics } from '../../../../lib/economicsEngine';
 import {
   buildF5EconomicsPayload,
   deterministicJsonEqual,
+  f5IntakePreferencesSignature,
   persistPipelineColumn,
   stableStringify,
 } from '../../../../lib/pipelineDeterministicRefresh';
@@ -268,9 +269,9 @@ export function F5_1_EconomicsDashboard({
     setF3Roles(normalizeF3Roles(data?.f3_roles).redesigns as Record<string, unknown>[]);
     setF4Pods(parseF4Pods(data?.f4_pods));
     const savedEconomics = asObj(data?.f5_economics);
-    setCachedF5Payload(Object.keys(savedEconomics).length > 0 ? savedEconomics : null);
-    setAssumptionsUsed(asObj(savedEconomics.assumptions_used));
     const hasSaved = Boolean(savedEconomics.economics_result);
+    setCachedF5Payload(hasSaved ? savedEconomics : null);
+    setAssumptionsUsed(hasSaved ? asObj(savedEconomics.assumptions_used) : {});
     setHasSavedEconomics(hasSaved);
     const cachedNarrative =
       typeof savedEconomics.sensitivity_narrative === 'string' ? savedEconomics.sensitivity_narrative : '';
@@ -283,6 +284,13 @@ export function F5_1_EconomicsDashboard({
     void loadPipeline();
   }, [loadPipeline]);
 
+  useEffect(() => {
+    if (!engagementIdFromUrl || refreshKey === 0) return;
+    narrativeFetchedRef.current = false;
+    setSensitivityNarrative('');
+    void loadEngagement(engagementIdFromUrl);
+  }, [engagementIdFromUrl, refreshKey, loadEngagement]);
+
   const selectedVariant = useMemo(() => selectedVariantFromF4Pods(f4Pods), [f4Pods]);
   const selectedVariantName = typeof f4Pods?.selected_variant_name === 'string' ? f4Pods.selected_variant_name : '';
 
@@ -293,13 +301,35 @@ export function F5_1_EconomicsDashboard({
     }
   }, [pipelineLoading, pipelineError, selectedVariant, onMissingF4Selection]);
 
+  const intakePreferences = useMemo(
+    () => asObj(asObj((engagement as Record<string, unknown> | null)?.intake_data).preferences),
+    [engagement],
+  );
+
+  const intakeSignature = useMemo(
+    () => f5IntakePreferencesSignature(engagement as Record<string, unknown> | null),
+    [engagement],
+  );
+
+  /** F1 intake preferences override stale cached assumption snapshots (billing, margin, etc.). */
   const preferences = useMemo(
     () => ({
-      ...asObj(asObj((engagement as Record<string, unknown> | null)?.intake_data).preferences),
       ...assumptionsUsed,
+      ...intakePreferences,
     }),
-    [engagement, assumptionsUsed],
+    [assumptionsUsed, intakePreferences],
   );
+
+  useEffect(() => {
+    const cachedSig =
+      typeof cachedF5Payload?.intake_signature_at_compute === 'string'
+        ? cachedF5Payload.intake_signature_at_compute
+        : null;
+    if (cachedSig && intakeSignature && cachedSig !== intakeSignature) {
+      narrativeFetchedRef.current = false;
+      setSensitivityNarrative('');
+    }
+  }, [cachedF5Payload, intakeSignature]);
 
   const economicsResult = useMemo(() => {
     if (!engagement || !selectedVariant) return null;
@@ -331,9 +361,10 @@ export function F5_1_EconomicsDashboard({
     const payload = buildF5EconomicsPayload(
       cachedF5Payload,
       economicsResult,
-      assumptionsUsed,
+      preferences,
       selectedVariantName,
       sensitivityNarrative,
+      intakeSignature,
     );
 
     (async () => {
@@ -358,7 +389,8 @@ export function F5_1_EconomicsDashboard({
     economicsResult,
     engagementIdFromUrl,
     pipelineLoading,
-    assumptionsUsed,
+    preferences,
+    intakeSignature,
     selectedVariantName,
     sensitivityNarrative,
     cachedF5Payload,
@@ -395,9 +427,10 @@ export function F5_1_EconomicsDashboard({
         const payload = buildF5EconomicsPayload(
           cachedF5Payload,
           economicsResult,
-          assumptionsUsed,
+          preferences,
           selectedVariantName,
           text,
+          intakeSignature,
         );
         const saveResult = await persistPipelineColumn(engagementIdFromUrl, 'f5_economics', payload);
         if (!cancelled && saveResult.ok) {
@@ -418,7 +451,15 @@ export function F5_1_EconomicsDashboard({
     return () => {
       cancelled = true;
     };
-  }, [economicsResult, engagementIdFromUrl, pipelineLoading, assumptionsUsed, selectedVariantName, cachedF5Payload]);
+  }, [
+    economicsResult,
+    engagementIdFromUrl,
+    pipelineLoading,
+    preferences,
+    intakeSignature,
+    selectedVariantName,
+    cachedF5Payload,
+  ]);
 
   const loading = engagementLoading || pipelineLoading;
   const error = engagementError ?? pipelineError;
