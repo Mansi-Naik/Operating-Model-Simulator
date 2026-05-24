@@ -1,4 +1,8 @@
-import { Settings, ArrowRight, TrendingUp, Check, Sparkles, Info, AlertTriangle } from 'lucide-react';
+import { Settings, ArrowRight, TrendingUp, Check, Sparkles, AlertTriangle } from 'lucide-react';
+import {
+  CompetitorAnalysisSection,
+  type CompetitorAnalysisData,
+} from './CompetitorAnalysisSection';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useEngagement } from '../../../../hooks/useEngagement';
@@ -35,6 +39,19 @@ function toNum(value: unknown): number {
   if (value == null || value === '') return 0;
   const n = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(n) ? n : 0;
+}
+
+function parseJsonColumn(raw: unknown): Record<string, unknown> | null {
+  if (raw == null) return null;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
 }
 
 function parseF4Pods(raw: unknown): Record<string, unknown> | null {
@@ -261,6 +278,52 @@ export function F5_1_EconomicsDashboard({
   const [narrativePending, setNarrativePending] = useState(false);
   const narrativeFetchedRef = useRef(false);
   const forceRecomputeRef = useRef(false);
+  const [showCompetitorAnalysis, setShowCompetitorAnalysis] = useState(false);
+  const [competitorData, setCompetitorData] = useState<CompetitorAnalysisData | null>(null);
+  const [isLoadingCompetitor, setIsLoadingCompetitor] = useState(false);
+  const [competitorError, setCompetitorError] = useState<string | null>(null);
+
+  const generateCompetitorAnalysis = useCallback(async () => {
+    if (!engagementIdFromUrl) return;
+    setIsLoadingCompetitor(true);
+    setCompetitorError(null);
+    try {
+      const response = await fetch('/api/generate-competitor-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engagement_id: engagementIdFromUrl }),
+      });
+      const responseText = await response.text();
+      if (!response.ok) {
+        let errMsg = responseText;
+        try {
+          const errBody = JSON.parse(responseText) as { error?: string };
+          errMsg = errBody.error || responseText;
+        } catch {
+          /* use raw text */
+        }
+        throw new Error(errMsg);
+      }
+      const data = JSON.parse(responseText) as CompetitorAnalysisData;
+      setCompetitorData(data);
+    } catch (err) {
+      setCompetitorError(err instanceof Error ? err.message : 'Failed to generate competitor analysis');
+    } finally {
+      setIsLoadingCompetitor(false);
+    }
+  }, [engagementIdFromUrl]);
+
+  const handleCompetitorClick = useCallback(() => {
+    if (showCompetitorAnalysis) {
+      setShowCompetitorAnalysis(false);
+      return;
+    }
+    setShowCompetitorAnalysis(true);
+    if (!competitorData && !isLoadingCompetitor) {
+      void generateCompetitorAnalysis();
+    }
+  }, [showCompetitorAnalysis, competitorData, isLoadingCompetitor, generateCompetitorAnalysis]);
+
   const loadPipeline = useCallback(async () => {
     if (!engagementIdFromUrl) {
       setPipelineError('Missing engagement');
@@ -271,7 +334,7 @@ export function F5_1_EconomicsDashboard({
     setPipelineError(null);
     const { data, error } = await supabase
       .from('pipeline_runs')
-      .select('id, f3_roles, f4_pods, f5_economics')
+      .select('id, f3_roles, f4_pods, f5_economics, competitor_analysis')
       .eq('engagement_id', engagementIdFromUrl)
       .maybeSingle();
 
@@ -296,6 +359,8 @@ export function F5_1_EconomicsDashboard({
       typeof savedEconomics.sensitivity_narrative === 'string' ? savedEconomics.sensitivity_narrative : '';
     setSensitivityNarrative(cachedNarrative);
     narrativeFetchedRef.current = Boolean(cachedNarrative.trim());
+    const cachedCompetitor = parseJsonColumn(data?.competitor_analysis);
+    setCompetitorData(cachedCompetitor ? (cachedCompetitor as CompetitorAnalysisData) : null);
     setPipelineLoading(false);
   }, [engagementIdFromUrl, refreshKey]);
 
@@ -615,8 +680,23 @@ export function F5_1_EconomicsDashboard({
         {/* Top Row */}
         <div className="flex items-center justify-between mb-6">
           <div className="text-[13px] text-[#161916]">ECONOMICS</div>
-          <div className="flex items-center gap-2">
-            <PipelineReRunButton feature="f5" onConfirmRerun={() => onReRun?.()} />
+          <div className="flex items-start gap-2">
+            <div className="flex flex-col items-stretch gap-2 min-w-[148px]">
+              <PipelineReRunButton feature="f5" onConfirmRerun={() => onReRun?.()} className="w-full justify-center" />
+              <button
+                type="button"
+                onClick={handleCompetitorClick}
+                disabled={isLoadingCompetitor}
+                className={`h-9 px-4 w-full border text-[13px] rounded-md flex items-center justify-center gap-2 disabled:opacity-60 ${
+                  showCompetitorAnalysis
+                    ? 'border-[#FD4E59] bg-[#FD4E59]/10 text-[#FD4E59]'
+                    : 'border-[#FD4E59] text-[#FD4E59] hover:bg-[#FD4E59]/5'
+                }`}
+              >
+                <TrendingUp className="w-4 h-4" />
+                Competitor Analysis
+              </button>
+            </div>
             <button type="button" className="h-9 px-3 border border-[#494949]/30 text-[#494949] rounded-md hover:bg-[#494949]/5">
               <Settings className="w-4 h-4" />
             </button>
@@ -877,6 +957,18 @@ export function F5_1_EconomicsDashboard({
             </div>
           </div>
         </div>
+
+        {showCompetitorAnalysis ? (
+          <CompetitorAnalysisSection
+            data={competitorData}
+            isLoading={isLoadingCompetitor}
+            error={competitorError}
+            onRegenerate={async () => {
+              setCompetitorData(null);
+              await generateCompetitorAnalysis();
+            }}
+          />
+        ) : null}
 
         {/* Sensitivity Panel */}
         <div className="bg-white border border-[#494949]/12 rounded-xl p-6 mb-4 shadow-sm">

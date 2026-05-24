@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
-/** @typedef {'f1_extraction' | 'f1_re_extraction' | 'f2_allocation' | 'f3_role' | 'f3_emergent' | 'f4_variant_narrative' | 'f5_sensitivity' | 'f6_phase_narratives'} GeminiFeature */
+/** @typedef {'f1_extraction' | 'f1_re_extraction' | 'f2_allocation' | 'f3_role' | 'f3_emergent' | 'f4_variant_narrative' | 'f5_sensitivity' | 'f6_phase_narratives' | 'competitor_analysis'} GeminiFeature */
 
 export const MODEL_CHAINS = {
   f1_extraction: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3-flash-preview'],
@@ -11,6 +11,7 @@ export const MODEL_CHAINS = {
   f4_variant_narrative: ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-3-flash-preview'],
   f5_sensitivity: ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-3-flash-preview'],
   f6_phase_narratives: ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-3-flash-preview'],
+  competitor_analysis: ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-3-flash-preview'],
 }
 
 export const DEFAULT_CHAIN = ['gemini-2.5-flash', 'gemini-2.5-flash-lite']
