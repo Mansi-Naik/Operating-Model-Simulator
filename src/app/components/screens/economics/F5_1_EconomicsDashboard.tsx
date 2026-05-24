@@ -1,9 +1,10 @@
-import { Settings, ArrowRight, TrendingUp, Check, Sparkles, Info, AlertTriangle } from 'lucide-react';
+import { Settings, ArrowRight, TrendingUp, Check, Sparkles, AlertTriangle } from 'lucide-react';
 import {
   CompetitorAnalysisSection,
   type CompetitorAnalysisData,
 } from './CompetitorAnalysisSection';
 import { ReinvestmentSection, type ReinvestmentData } from './ReinvestmentSection';
+import { SensitivityTornadoChart } from './SensitivityTornadoChart';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useEngagement } from '../../../../hooks/useEngagement';
@@ -160,45 +161,6 @@ function areaPath(points: { x: number; y: number; value: number }[], zeroY: numb
   const first = filtered[0];
   const last = filtered[filtered.length - 1];
   return `${chartPath(filtered)} L ${last.x},${zeroY} L ${first.x},${zeroY} Z`;
-}
-
-function SensitivityBar({ driver }: { driver: Record<string, unknown> }) {
-  const low = toNum(driver.low_pct);
-  const base = toNum(driver.base_pct);
-  const high = toNum(driver.high_pct);
-  const min = Math.min(low, base, high);
-  const max = Math.max(low, base, high);
-  const pos = max > min ? ((base - min) / (max - min)) * 100 : 50;
-
-  return (
-    <div className="flex items-center gap-4">
-      <div className="w-[200px] text-[14px] font-medium text-[#161916]">{String(driver.name ?? 'Driver')}</div>
-      <div className="flex-1 relative">
-        <div className="flex items-center justify-between text-[12px] text-[#6D7069] mb-2">
-          <span>{fmtPct(low)}</span>
-          <span>{fmtPct(high)}</span>
-        </div>
-        <div className="h-2 bg-[#FFF0DC] rounded-full relative">
-          <div className="absolute inset-0 bg-[#FD4E59] rounded-full opacity-90" />
-          <div
-            className="absolute w-4 h-4 bg-[#FD4E59] border-2 border-white rounded-full shadow-md"
-            style={{ left: `calc(${pos}% - 8px)`, top: '-4px' }}
-          />
-        </div>
-        <div className="mt-2 relative h-6">
-          <div
-            className="absolute -translate-x-1/2 px-3 py-1 bg-[#FD4E59] text-white text-[11px] font-semibold uppercase tracking-wide rounded whitespace-nowrap"
-            style={{ left: `${pos}%` }}
-          >
-            BASE: {fmtPct(base)}
-          </div>
-        </div>
-      </div>
-      <div className="w-[60px] flex justify-center">
-        <Info className="w-4 h-4 text-[#6D7069] cursor-help" />
-      </div>
-    </div>
-  );
 }
 
 function SavingsCurveChart({ curve, paybackMonth }: { curve: Record<string, unknown>[]; paybackMonth: number }) {
@@ -1082,20 +1044,18 @@ export function F5_1_EconomicsDashboard({
         ) : null}
 
         {/* Sensitivity Panel */}
-        <div className="bg-white border border-[#494949]/12 rounded-xl p-6 mb-4 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
+        <div className="bg-white border border-[#494949]/12 rounded-xl p-5 mb-4 shadow-sm">
+          <div className="flex items-center justify-between mb-1">
             <h2 className="text-[16px] font-bold text-[#161916]">Sensitivity — top 3 drivers</h2>
-            <span className="text-[12px] text-[#6D7069]">{drivers.length} modeled drivers</span>
+            <span className="text-[12px] text-[#161916] bg-[#FFF0DC] px-2.5 py-1 rounded-full">
+              {drivers.length} modeled drivers
+            </span>
           </div>
           <p className="text-[13px] text-[#6D7069] mb-4">
-            How much do the savings change if each assumption is off?
+            How much do savings change if each assumption is off?
           </p>
 
-          <div className="space-y-4">
-            {drivers.map((driver, idx) => (
-              <SensitivityBar key={`${String(driver.name ?? 'driver')}-${idx}`} driver={driver} />
-            ))}
-          </div>
+          <SensitivityTornadoChart drivers={drivers} />
         </div>
 
         {/* Sensitivity Narrative Callout */}
