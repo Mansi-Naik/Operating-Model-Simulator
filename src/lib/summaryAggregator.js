@@ -168,10 +168,13 @@ function computeCurrentAiCoveragePct(engagement, tasks) {
   const aiEntries = readAiInUse(engagement)
   if (!aiEntries.length) return 0
 
-  const platformCoverage = Math.min(
-    100,
-    aiEntries.reduce((sum, entry) => sum + aiEntryCoveragePct(entry), 0),
-  )
+  // Average coverage across all in-use AI systems. Different systems
+  // typically cover different tasks, so summing percentages would
+  // overstate. Averaging gives a balanced view of current AI
+  // penetration across the operation.
+  const totalCoverage = aiEntries.reduce((sum, entry) => sum + aiEntryCoveragePct(entry), 0)
+  const platformCoverage =
+    aiEntries.length > 0 ? Math.min(100, totalCoverage / aiEntries.length) : 0
 
   if (totalWeight <= 0) return round(platformCoverage, 1)
 
