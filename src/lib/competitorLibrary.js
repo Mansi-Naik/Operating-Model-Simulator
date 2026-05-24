@@ -109,26 +109,26 @@ const FINANCE_OPERATIONS_PROVIDERS = [
     short: 'GEN',
     is_genpact: true,
     scores: {
-      ai_automation: 4,
-      industry_expertise: 5,
+      ai_automation: 3,
+      industry_expertise: 4,
       cost_competitive: 3,
-      implementation_speed: 4,
+      implementation_speed: 3,
       risk_compliance: 4,
-      client_outcomes: 4,
+      client_outcomes: 3,
     },
     rationales: {
       ai_automation:
-        'Cora platform integrates RPA, ML, and GenAI. AP Suite is first agentic AI solution launched 2025. Cora Knowledge Assist, LiveSpread for financial statements, OrderAssist deployed at scale. Named ISG Leader for GenAI + Agentic AI 2025.',
+        'Cora integrates RPA, ML, and GenAI with AP Suite and agentic workflows (ISG Leader GenAI 2025). Strong but behind Accenture on GenAI revenue scale and Infosys Topaz marketing intensity.',
       industry_expertise:
-        'Born from GE Capital 1997. Everest FAO PEAK Matrix Leader 13 consecutive years. Listed in Gartner Magic Quadrant F&A BPO 2025. Manages P2P, O2C, R2R, FP&A, treasury at enterprise scale. 20M+ transactions/month via Cora across 250 ecosystems.',
+        'Everest FAO PEAK Matrix Leader 13 years; Gartner MQ F&A BPO 2025. Deep P2P, O2C, R2R, FP&A scale — leading F&A BPO specialist, not unmatched on every sub-process.',
       cost_competitive:
         'Mid-market pricing. Not the cheapest (TCS, Infosys often undercut) but not premium (Accenture). Strong outcome-based pricing options.',
       implementation_speed:
-        'Established F&A delivery model with reusable accelerators. Typical 6-9 months for full transition. AI Model Hub and Engineering Library accelerate deployment.',
+        'Reusable F&A accelerators; typical 6-9 month transitions. Solid but not fastest vs mid-market specialists on smaller scopes.',
       risk_compliance:
-        'Deep regulated industry experience (banking, insurance). SOX, GDPR, financial services regulations expertise. Strong compliance frameworks. Insurance vertical Leader recognition.',
+        'Deep regulated industry experience (banking, insurance). SOX, GDPR, financial services regulations expertise. Strong compliance frameworks.',
       client_outcomes:
-        'Documented results in case studies: 45% touch-time reduction, 100% automated spreading accuracy in lending. Strong NPS in F&A segment per analyst reports.',
+        'Documented touch-time and accuracy gains in case studies. Strong F&A NPS; outcomes evidence thinner vs Accenture on premium transformations.',
     },
     strengths: [
       'Cora platform maturity in F&A',

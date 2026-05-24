@@ -252,7 +252,7 @@ export async function handleCompetitorAnalysis(req, res) {
       feature: FEATURE,
       temperature: 0.3,
       response_mime_type: 'application/json',
-      max_output_tokens: 1024,
+      max_output_tokens: 2048,
     })
     responseText = geminiMeta.response_text
 
@@ -288,6 +288,7 @@ export async function handleCompetitorAnalysis(req, res) {
       domain_used: libraryKey,
       north_star_dimension: 'ai_automation',
       scores_source: 'curated_benchmarks',
+      benchmarks_version: '2025-05-v2',
       data_source:
         'Curated from 2025 analyst reports (Gartner MQ F&A BPO, ISG Provider Lens, HFS, IDC MarketScape) and public company filings',
     }

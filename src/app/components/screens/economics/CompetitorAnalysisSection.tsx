@@ -316,10 +316,10 @@ export function CompetitorAnalysisSection({
       </header>
 
       <p className="text-[13px] text-[#6D7069] mb-5">
-        Scores benchmarked from 2025 analyst reports (Gartner, ISG, HFS, IDC) and public sources.
-        Strategic narrative AI-generated per engagement. Verify before client use.
-        {data?.generated_at ? ` Generated ${timeAgo(data.generated_at)}.` : ''}
-        {data?.domain_used ? ` Domain set: ${data.domain_used}.` : ''}
+        Scores are fixed curated benchmarks from 2025 analyst reports (Gartner, ISG, HFS, IDC) — they do not
+        change when you re-generate. Re-generate updates only the strategic narrative below.
+        {data?.generated_at ? ` Narrative generated ${timeAgo(data.generated_at)}.` : ''}
+        {data?.domain_used ? ` Domain: ${data.domain_used}.` : ''}
       </p>
 
       {isLoading ? (
