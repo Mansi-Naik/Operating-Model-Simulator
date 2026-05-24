@@ -291,6 +291,9 @@ export function F5_1_EconomicsDashboard({
   const [competitorData, setCompetitorData] = useState<CompetitorAnalysisData | null>(null);
   const [isLoadingCompetitor, setIsLoadingCompetitor] = useState(false);
   const [competitorError, setCompetitorError] = useState<string | null>(null);
+  const [reinvestmentData, setReinvestmentData] = useState<ReinvestmentData | null>(null);
+  const [isLoadingReinvestment, setIsLoadingReinvestment] = useState(false);
+  const [reinvestmentError, setReinvestmentError] = useState<string | null>(null);
 
   const generateCompetitorAnalysis = useCallback(async () => {
     if (!activeEngagementId) return;
