@@ -140,7 +140,10 @@ export function formatBillingModelForDisplay(bmRaw: unknown): string | null {
   }
   if (t === 'fixed') {
     const f = Number(bm.fixed_monthly_value);
-    if (!Number.isFinite(f)) return null;
+    if (!Number.isFinite(f) || f <= 0) return 'Fixed · value not set';
+    if (bm.fixed_monthly_value_is_estimated === true) {
+      return `Fixed · $${formatUsdAmount(f)}/mo (estimated)`;
+    }
     return `Fixed · $${formatUsdAmount(f)}/mo`;
   }
   return null;

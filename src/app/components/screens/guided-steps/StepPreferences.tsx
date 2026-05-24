@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { computeCurrentState, estimateFixedMonthlyValue } from '../../../../lib/economicsEngine';
 import { Lock } from 'lucide-react';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { IntakeAiBadge } from '../../intake/IntakeAiBadge';
@@ -205,6 +206,14 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
     setBillingModelType(nextType);
     resetBillingSubFields();
   };
+
+  const suggestedFixedMonthly = useMemo(() => {
+    if (!engagement || billingModelType !== 'fixed' || fixedMonthly.trim() !== '') return null;
+    const eng = engagement as Record<string, unknown>;
+    const current = computeCurrentState(eng);
+    const estimate = estimateFixedMonthlyValue({ type: 'fixed', fixed_monthly_value: null }, current, eng);
+    return estimate.value > 0 ? estimate.value : null;
+  }, [engagement, billingModelType, fixedMonthly, marginProfile]);
 
   const badge = (path: string) => {
     if (!aiPaths.has(path)) return null;
@@ -523,9 +532,42 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
             <input
               type="number"
               value={fixedMonthly}
-              onChange={(e) => setFixedMonthly(e.target.value)}
+              onChange={(e) => {
+                clearPath('preferences.billing_model');
+                setFixedMonthly(e.target.value);
+              }}
+              placeholder={
+                suggestedFixedMonthly != null
+                  ? `Suggested: ${suggestedFixedMonthly.toLocaleString('en-US')}`
+                  : undefined
+              }
               className="w-full max-w-xs h-11 px-4 border border-[#161916]/20 rounded-md text-[14px] text-[#161916] focus:border-[#FD4E59] focus:outline-none"
             />
+            {suggestedFixedMonthly != null ? (
+              <div className="mt-2 flex flex-wrap items-center gap-3 max-w-xl">
+                <p className="text-[12px] text-[#6D7069]">
+                  Suggested ${suggestedFixedMonthly.toLocaleString('en-US')}/mo from hierarchy delivery cost
+                  {marginProfile && marginProfile !== 'not_disclosed'
+                    ? ` and ${marginProfile} margin profile`
+                    : ''}
+                  . F5 uses this estimate until you enter a contract value.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearPath('preferences.billing_model');
+                    setFixedMonthly(String(suggestedFixedMonthly));
+                  }}
+                  className="text-[12px] font-semibold text-[#FD4E59] hover:text-[#FD4E59]/80 underline"
+                >
+                  Use suggestion
+                </button>
+              </div>
+            ) : (
+              <p className="text-[12px] text-[#6D7069] mt-2">
+                Add hierarchy cost data in F1 to derive a suggested contract value, or enter the monthly fee here.
+              </p>
+            )}
           </div>
         ) : null}
 

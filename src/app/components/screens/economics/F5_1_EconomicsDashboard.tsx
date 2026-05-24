@@ -638,7 +638,9 @@ export function F5_1_EconomicsDashboard({
           </p>
           <p className="text-[13px] text-[#494949] mt-2">
             Billing from intake:{' '}
-            {formatBillingModelForDisplay(intakePreferences.billing_model) ?? 'not specified'}
+            {billingModelDisplay ||
+              formatBillingModelForDisplay(intakePreferences.billing_model) ||
+              'not specified'}
           </p>
         </div>
 

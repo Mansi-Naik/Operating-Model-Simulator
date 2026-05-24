@@ -344,6 +344,129 @@ function mergePreferences(engagement, preferences) {
   }
 }
 
+/** Target gross-margin uplift multipliers by F1 margin profile (revenue ≈ cost × multiplier). */
+const REVENUE_MARKUP_BY_MARGIN_PROFILE = {
+  low: 1.12,
+  medium: 1.176,
+  high: 1.333,
+  not_disclosed: 1.3,
+}
+
+/**
+ * @param {unknown} marginProfile
+ * @returns {number}
+ */
+function revenueMarkupMultiplier(marginProfile) {
+  const key = typeof marginProfile === 'string' ? marginProfile.trim() : 'not_disclosed'
+  return REVENUE_MARKUP_BY_MARGIN_PROFILE[/** @type {keyof typeof REVENUE_MARKUP_BY_MARGIN_PROFILE} */ (key)] ?? 1.3
+}
+
+/**
+ * Rounds to nearest $1k for readable contract suggestions.
+ *
+ * @param {number} value
+ * @returns {number}
+ */
+function roundContractValue(value) {
+  if (!Number.isFinite(value) || value <= 0) return 0
+  if (value >= 10000) return Math.round(value / 1000) * 1000
+  return Math.round(value)
+}
+
+/**
+ * Implied monthly billings from other rate fields on the billing model (when populated).
+ *
+ * @param {Record<string, unknown> | null | undefined} billingModel
+ * @param {Record<string, unknown> | null | undefined} currentState
+ * @returns {number}
+ */
+function impliedMonthlyRevenueFromBillingHints(billingModel, currentState) {
+  if (!billingModel) return 0
+  const hc = nonNeg(currentState?.headcount_total)
+  const unitCost = nonNeg(billingModel.unit_cost)
+  if (unitCost > 0) {
+    const volume = nonNeg(currentState?.items_per_day) * WORKING_DAYS_PER_MONTH
+    if (volume > 0) return volume * unitCost
+  }
+  const monthlyPerFte = nonNeg(billingModel.monthly_per_fte)
+  if (monthlyPerFte > 0 && hc > 0) return hc * monthlyPerFte
+  const hourly = nonNeg(billingModel.hourly_rate)
+  if (hourly > 0 && hc > 0) return hc * 160 * hourly
+  return 0
+}
+
+/**
+ * Estimates fixed monthly contract value when intake leaves it blank.
+ *
+ * @param {Record<string, unknown> | null | undefined} billingModel
+ * @param {Record<string, unknown> | null | undefined} currentState
+ * @param {Record<string, unknown> | null | undefined} engagement
+ * @returns {{ value: number, estimated: boolean, source: string }}
+ */
+export function estimateFixedMonthlyValue(billingModel, currentState, engagement) {
+  const stated = nonNeg(billingModel?.fixed_monthly_value)
+  const markedEstimated = billingModel?.fixed_monthly_value_is_estimated === true
+  if (stated > 0 && !markedEstimated) {
+    return { value: stated, estimated: false, source: 'intake' }
+  }
+  if (stated > 0 && markedEstimated) {
+    return {
+      value: stated,
+      estimated: true,
+      source:
+        typeof billingModel?.fixed_monthly_value_estimate_source === 'string'
+          ? billingModel.fixed_monthly_value_estimate_source
+          : 'delivery_cost_margin',
+    }
+  }
+
+  const implied = impliedMonthlyRevenueFromBillingHints(billingModel, currentState)
+  if (implied > 0) {
+    return { value: roundContractValue(implied), estimated: true, source: 'billing_hints' }
+  }
+
+  const deliveryCost = nonNeg(currentState?.monthly_cost_usd)
+  const prefs = readPreferencesFromEngagement(engagement)
+  const multiplier = revenueMarkupMultiplier(prefs.margin_profile)
+  const fromDeliveryCost = roundContractValue(deliveryCost * multiplier)
+  if (fromDeliveryCost > 0) {
+    return { value: fromDeliveryCost, estimated: true, source: 'delivery_cost_margin' }
+  }
+
+  return { value: 0, estimated: true, source: 'none' }
+}
+
+/**
+ * Resolves billing model for economics: fills missing fixed contract value from estimates.
+ *
+ * @param {Record<string, unknown> | null | undefined} billingModel
+ * @param {Record<string, unknown> | null | undefined} currentState
+ * @param {Record<string, unknown> | null | undefined} engagement
+ * @returns {Record<string, unknown> | null}
+ */
+export function resolveBillingModelForEconomics(billingModel, currentState, engagement) {
+  if (!billingModel || typeof billingModel !== 'object' || Array.isArray(billingModel)) return null
+  const bm = { ...billingModel }
+  if (bm.type !== 'fixed') return bm
+
+  const estimate = estimateFixedMonthlyValue(bm, currentState, engagement)
+  if (nonNeg(bm.fixed_monthly_value) <= 0 && estimate.value > 0) {
+    bm.fixed_monthly_value = estimate.value
+    bm.fixed_monthly_value_is_estimated = true
+    bm.fixed_monthly_value_estimate_source = estimate.source
+  }
+  return bm
+}
+
+/**
+ * @param {number} amount
+ * @returns {string}
+ */
+function formatBillingUsd(amount) {
+  const n = Math.round(nonNeg(amount))
+  return n.toLocaleString('en-US')
+}
+
 /**
  * @param {string} billingType
  * @param {number} revDeltaPct
@@ -367,9 +490,10 @@ function generateRevenueNarrative(billingType, revDeltaPct, hcReductionPct) {
  * @param {Record<string, unknown> | null | undefined} currentState
  * @param {Record<string, unknown> | null | undefined} futureState
  * @param {Record<string, unknown> | null | undefined} billingModel
+ * @param {Record<string, unknown> | null | undefined} [engagement]
  * @returns {Record<string, unknown>}
  */
-export function computeGenpactRevenueImpact(currentState, futureState, billingModel) {
+export function computeGenpactRevenueImpact(currentState, futureState, billingModel, engagement) {
   const bm = billingModel && typeof billingModel === 'object' && !Array.isArray(billingModel)
     ? /** @type {Record<string, unknown>} */ (billingModel)
     : null
@@ -410,7 +534,8 @@ export function computeGenpactRevenueImpact(currentState, futureState, billingMo
     monthlyRevenueCurrent = volume * unit
     monthlyRevenueFuture = volume * unit
   } else if (type === 'fixed') {
-    const fixed = nonNeg(bm.fixed_monthly_value)
+    const estimate = estimateFixedMonthlyValue(bm, currentState, engagement)
+    const fixed = estimate.value
     monthlyRevenueCurrent = fixed
     monthlyRevenueFuture = fixed
   } else {
@@ -475,6 +600,8 @@ export function computeGenpactView(currentState, futureState, billingModel, _eng
   let revenueCurrent = 0
   let revenueFuture = 0
   let billingModelDisplay = 'Not specified'
+  /** @type {{ value: number, estimated: boolean, source: string } | null} */
+  let fixedEstimate = null
 
   if (!bm || billingType === 'not_specified') {
     revenueCurrent = costToDeliverCurrent * 1.3
@@ -502,10 +629,13 @@ export function computeGenpactView(currentState, futureState, billingModel, _eng
     revenueFuture = headcountFuture * ratePerFte
     billingModelDisplay = `FTE-based · $${ratePerFte}/FTE/mo`
   } else if (billingType === 'fixed') {
-    const fixedValue = nonNeg(bm.fixed_monthly_value)
+    fixedEstimate = estimateFixedMonthlyValue(bm, currentState, _engagement)
+    const fixedValue = fixedEstimate.value
     revenueCurrent = fixedValue
     revenueFuture = fixedValue
-    billingModelDisplay = `Fixed · $${fixedValue}/mo`
+    billingModelDisplay = fixedEstimate.estimated
+      ? `Fixed · $${formatBillingUsd(fixedValue)}/mo (estimated)`
+      : `Fixed · $${formatBillingUsd(fixedValue)}/mo`
   }
 
   const grossProfitCurrent = revenueCurrent - costToDeliverCurrent
@@ -550,6 +680,8 @@ export function computeGenpactView(currentState, futureState, billingModel, _eng
     monthly_savings: costToDeliverCurrent - costToDeliverFuture,
     revenue_per_fte_current: headcountCurrent > 0 ? revenueCurrent / headcountCurrent : 0,
     revenue_per_fte_future: headcountFuture > 0 ? revenueFuture / headcountFuture : 0,
+    fixed_monthly_value_used: billingType === 'fixed' ? revenueCurrent : null,
+    fixed_monthly_value_estimated: fixedEstimate?.estimated === true,
   }
 }
 
@@ -582,7 +714,12 @@ export function computeBillingModelRecommendation(currentState, futureState, bil
   const unitCost = nonNeg(bmBase.unit_cost)
   const hourlyRate = nonNeg(bmBase.hourly_rate)
   const monthlyPerFte = nonNeg(bmBase.monthly_per_fte)
-  const fixedMonthly = nonNeg(bmBase.fixed_monthly_value)
+  const fixedEstimate = estimateFixedMonthlyValue(
+    { type: 'fixed', ...bmBase },
+    currentState,
+    engagement,
+  )
+  const fixedMonthly = nonNeg(bmBase.fixed_monthly_value) || fixedEstimate.value
 
   const candidates = [
     {
@@ -1357,12 +1494,18 @@ export function runFullEconomics(engagement, tasks, f4SelectedVariant, f3Roles, 
     billingModelRaw && typeof billingModelRaw === 'object' && !Array.isArray(billingModelRaw)
       ? /** @type {Record<string, unknown>} */ (billingModelRaw)
       : null
-  const genpact_revenue_impact = computeGenpactRevenueImpact(current_state, future_state, billingModel)
-  const genpact_view = computeGenpactView(current_state, future_state, billingModel, engagement)
+  const billingModelResolved = resolveBillingModelForEconomics(billingModel, current_state, engagement)
+  const genpact_revenue_impact = computeGenpactRevenueImpact(
+    current_state,
+    future_state,
+    billingModelResolved,
+    engagement,
+  )
+  const genpact_view = computeGenpactView(current_state, future_state, billingModelResolved, engagement)
   const billing_model_recommendation = computeBillingModelRecommendation(
     current_state,
     future_state,
-    billingModel,
+    billingModelResolved,
     engagement,
   )
   const monthsToSteady = nonNeg(prefs.months_to_steady_state) || DEFAULT_MONTHS_TO_STEADY
