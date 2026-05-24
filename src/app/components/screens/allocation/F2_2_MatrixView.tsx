@@ -7,6 +7,7 @@ import { generateAdvisories } from '../../../../lib/advisoryGeneration';
 import { intakeChangedSincePipelineCreated } from '../../../../lib/pipelineDeterministicRefresh';
 import { supabase } from '../../../../supabaseClient';
 import { F2_4_Advisories } from './F2_4_Advisories';
+import { TechIconCell } from './TechIconCell';
 
 interface Task {
   id: string;
@@ -193,6 +194,16 @@ export function F2_2_MatrixView({
     engagementLoading || (pipelineLoading && allTaskRows.length === 0 && Boolean(f2_data?.tasks?.length));
   const canProceedToF3 =
     allTaskRows.length > 0 && !isLoadingData && (fallbackCount === 0 || hasPersistedF2);
+  const taskRowById = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>>();
+    const source = Array.isArray(dbTasks) ? dbTasks : [];
+    source.forEach((row: any, index: number) => {
+      const id = String(row?.id ?? `row-${index}`);
+      map.set(id, row as Record<string, unknown>);
+    });
+    return map;
+  }, [dbTasks]);
+
   const roleOptions = useMemo(() => ['All', ...Array.from(new Set(tasks.map((t) => t.role)))], [tasks]);
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
@@ -459,6 +470,9 @@ export function F2_2_MatrixView({
             <tr className="bg-[#FDF8F4] border-b border-[#494949]/8">
               <th className="px-4 py-3 text-left text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide w-16">#</th>
               <th className="px-4 py-3 text-left text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide">Task</th>
+              <th className="px-2 py-3 text-center text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide w-[72px]">
+                Tech
+              </th>
               <th className="px-4 py-3 text-left text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide w-32">Role</th>
               <th className="px-4 py-3 text-left text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide w-40">Recommended</th>
               <th className="px-4 py-3 text-left text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide w-32">Confidence</th>
@@ -474,6 +488,7 @@ export function F2_2_MatrixView({
               >
                 <td className="px-4 py-4 text-[14px] text-[#6D7069]">{task.number}</td>
                 <td className="px-4 py-4 text-[14px] text-[#161916]">{task.task}</td>
+                <TechIconCell taskRow={taskRowById.get(task.id) ?? { task_name: task.task }} />
                 <td className="px-4 py-4">
                   <div className="px-3 py-1 bg-[#FFF0DC] rounded text-[13px] text-[#161916] inline-block">
                     {task.role}
