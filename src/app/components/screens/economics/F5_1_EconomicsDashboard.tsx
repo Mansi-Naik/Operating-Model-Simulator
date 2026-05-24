@@ -3,6 +3,7 @@ import {
   CompetitorAnalysisSection,
   type CompetitorAnalysisData,
 } from './CompetitorAnalysisSection';
+import { ReinvestmentSection, type ReinvestmentData } from './ReinvestmentSection';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useEngagement } from '../../../../hooks/useEngagement';
@@ -327,6 +328,36 @@ export function F5_1_EconomicsDashboard({
     }
   }, [showCompetitorAnalysis, competitorData, isLoadingCompetitor, generateCompetitorAnalysis]);
 
+  const generateReinvestment = useCallback(async () => {
+    if (!engagementIdFromUrl) return;
+    setIsLoadingReinvestment(true);
+    setReinvestmentError(null);
+    try {
+      const response = await fetch('/api/generate-reinvestment-opportunities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engagement_id: engagementIdFromUrl }),
+      });
+      const responseText = await response.text();
+      if (!response.ok) {
+        let errMsg = responseText;
+        try {
+          const errBody = JSON.parse(responseText) as { error?: string; details?: string };
+          errMsg = [errBody.error, errBody.details].filter(Boolean).join(': ') || responseText;
+        } catch {
+          /* use raw text */
+        }
+        throw new Error(errMsg);
+      }
+      const data = JSON.parse(responseText) as ReinvestmentData;
+      setReinvestmentData(data);
+    } catch (err) {
+      setReinvestmentError(err instanceof Error ? err.message : 'Failed to generate reinvestment opportunities');
+    } finally {
+      setIsLoadingReinvestment(false);
+    }
+  }, [engagementIdFromUrl]);
+
   const loadPipeline = useCallback(async () => {
     if (!engagementIdFromUrl) {
       setPipelineError('Missing engagement');
@@ -371,6 +402,14 @@ export function F5_1_EconomicsDashboard({
       .maybeSingle();
     const cachedCompetitor = parseJsonColumn(competitorRow?.competitor_analysis);
     setCompetitorData(cachedCompetitor ? (cachedCompetitor as CompetitorAnalysisData) : null);
+
+    const { data: reinvestmentRow } = await supabase
+      .from('pipeline_runs')
+      .select('reinvestment_opportunities')
+      .eq('engagement_id', engagementIdFromUrl)
+      .maybeSingle();
+    const cachedReinvestment = parseJsonColumn(reinvestmentRow?.reinvestment_opportunities);
+    setReinvestmentData(cachedReinvestment ? (cachedReinvestment as ReinvestmentData) : null);
 
     setPipelineLoading(false);
   }, [engagementIdFromUrl, refreshKey]);
@@ -631,6 +670,11 @@ export function F5_1_EconomicsDashboard({
   const genpactHcDeltaPct = toNum(genpactView.headcount_delta_pct);
   const billingModelDisplay = String(genpactView.billing_model_display ?? 'Not specified');
   const genpactNarrative = String(genpactView.narrative ?? '');
+  const monthlyDeliverySavings = Math.max(0, costDeliverCurrent - costDeliverFuture);
+  const clientName =
+    typeof engagement?.client_name === 'string' && engagement.client_name.trim()
+      ? engagement.client_name.trim()
+      : 'this client';
   const showGainshareWarning =
     (billingTypeLabel === 'fte_based' || billingTypeLabel === 'hourly') && revenueDeltaPct < -10;
 
@@ -1026,6 +1070,19 @@ export function F5_1_EconomicsDashboard({
             {narrativePending ? 'Generating analysis...' : sensitivityNarrative}
           </p>
         </div>
+
+        <ReinvestmentSection
+          clientName={clientName}
+          monthlySavings={monthlyDeliverySavings}
+          data={reinvestmentData}
+          isLoading={isLoadingReinvestment}
+          error={reinvestmentError}
+          onGenerate={generateReinvestment}
+          onRegenerate={async () => {
+            setReinvestmentData(null);
+            await generateReinvestment();
+          }}
+        />
 
         {/* Footer Action Row */}
         <div className="flex justify-end items-center gap-4">

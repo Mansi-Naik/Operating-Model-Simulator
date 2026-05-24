@@ -1,5 +1,6 @@
 import callGemini, { geminiLogExtras } from './_lib/geminiClient.js'
 import { handleCompetitorAnalysis } from './_lib/competitorAnalysisCore.js'
+import { handleReinvestmentOpportunities } from './_lib/reinvestmentCore.js'
 import { applyCorsHeaders, resolveAllowedCorsOrigin } from '../src/lib/apiCors.js'
 import { createSupabaseAdmin } from '../src/lib/supabaseAdmin.js'
 
@@ -117,6 +118,7 @@ function validateNarrativePayload(obj) {
  *
  * - `{ engagementId, sensitivityData }` → sensitivity narrative `{ narrative }`
  * - `{ action: 'competitor_analysis', engagement_id }` → competitor analysis JSON
+ * - `{ action: 'reinvestment_opportunities', engagement_id }` → reinvestment opportunities JSON
  *
  * **Env:** `GEMINI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_URL` or `VITE_SUPABASE_URL`
  *
@@ -149,6 +151,10 @@ export default async function handler(req, res) {
     const action = typeof body.action === 'string' ? body.action.trim() : ''
     if (action === 'competitor_analysis') {
       await handleCompetitorAnalysis(req, res)
+      return
+    }
+    if (action === 'reinvestment_opportunities') {
+      await handleReinvestmentOpportunities(req, res)
       return
     }
   }
