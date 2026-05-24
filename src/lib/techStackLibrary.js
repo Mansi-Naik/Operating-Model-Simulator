@@ -2,7 +2,87 @@
  * Deterministic tech application recommendations for F2 allocation matrix (no API).
  */
 
-export const TECH_STACK = Object.freeze({
+/** @type {Record<string, string>} */
+const TECH_LOGO_DOMAINS = {
+  sap_s4hana: 'sap.com',
+  oracle_cloud_erp: 'oracle.com',
+  oracle_fusion: 'oracle.com',
+  ms_dynamics_365: 'microsoft.com',
+  oracle_netsuite: 'netsuite.com',
+  blackline: 'blackline.com',
+  highradius: 'highradius.com',
+  coupa: 'coupa.com',
+  zuora: 'zuora.com',
+  salesforce_crm: 'salesforce.com',
+  hubspot: 'hubspot.com',
+  zendesk: 'zendesk.com',
+  servicenow: 'servicenow.com',
+  anaplan: 'anaplan.com',
+  snowflake: 'snowflake.com',
+  databricks: 'databricks.com',
+  ms_fabric: 'microsoft.com',
+  bigquery: 'google.com',
+  postgresql: 'postgresql.org',
+  workday: 'workday.com',
+}
+
+/** @type {Record<string, string>} */
+const TECH_BRAND_ABBREV = {
+  sap_s4hana: 'SAP',
+  oracle_cloud_erp: 'OR',
+  oracle_fusion: 'OF',
+  ms_dynamics_365: 'D365',
+  oracle_netsuite: 'NS',
+  blackline: 'BL',
+  highradius: 'HR',
+  coupa: 'CP',
+  zuora: 'ZU',
+  salesforce_crm: 'SF',
+  hubspot: 'HB',
+  zendesk: 'ZD',
+  servicenow: 'SN',
+  anaplan: 'AN',
+  snowflake: 'SNF',
+  databricks: 'DB',
+  ms_fabric: 'MF',
+  bigquery: 'BQ',
+  postgresql: 'PG',
+  workday: 'WD',
+}
+
+/**
+ * @param {string} domain
+ * @returns {string}
+ */
+export function faviconLogoUrl(domain) {
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`
+}
+
+/**
+ * @param {string} domain
+ * @returns {string}
+ */
+function clearbitLogoUrl(domain) {
+  return `https://logo.clearbit.com/${domain}`
+}
+
+/**
+ * @param {Record<string, unknown>} tech
+ * @param {string} id
+ * @returns {Record<string, unknown>}
+ */
+function enrichTechEntry(tech, id) {
+  const domain = TECH_LOGO_DOMAINS[id] ?? 'example.com'
+  return {
+    ...tech,
+    logo_domain: domain,
+    logo: faviconLogoUrl(domain),
+    logo_alt: clearbitLogoUrl(domain),
+    brand_abbrev: TECH_BRAND_ABBREV[id] ?? String(tech.name ?? 'T').slice(0, 2).toUpperCase(),
+  }
+}
+
+const TECH_STACK_RAW = {
   sap_s4hana: {
     id: 'sap_s4hana',
     name: 'SAP S/4HANA',
@@ -183,7 +263,13 @@ export const TECH_STACK = Object.freeze({
     setup_weeks: '12-24',
     maintenance_hours_monthly: '15-25',
   },
-})
+}
+
+export const TECH_STACK = Object.freeze(
+  Object.fromEntries(
+    Object.entries(TECH_STACK_RAW).map(([id, tech]) => [id, Object.freeze(enrichTechEntry(tech, id))]),
+  ),
+)
 
 /** @type {Record<string, string[]>} */
 export const CONSIDERATIONS_BY_CATEGORY = Object.freeze({
@@ -278,18 +364,29 @@ export function getConsiderationsForCategory(category) {
  * @param {Record<string, unknown>} task
  * @param {string} rationale
  */
-function buildRecommendation(tech, task, rationale) {
+/**
+ * @param {Record<string, unknown>} tech
+ * @param {Record<string, unknown>} task
+ * @param {string} rationale
+ * @param {'primary' | 'complementary'} [fit]
+ */
+function buildRecommendation(tech, task, rationale, fit = 'primary') {
   const taskName = typeof task.task_name === 'string' ? task.task_name : ''
+  const domain = typeof tech.logo_domain === 'string' ? tech.logo_domain : ''
   return {
     tech_id: tech.id,
     tech_name: tech.name,
     logo: tech.logo,
+    logo_alt: tech.logo_alt,
+    logo_domain: domain,
+    brand_abbrev: tech.brand_abbrev,
     annual_cost_usd: tech.annual_cost_usd,
     category: tech.category,
     setup_weeks: tech.setup_weeks,
     maintenance_hours_monthly: tech.maintenance_hours_monthly,
     rationale,
     task_name: taskName,
+    fit,
   }
 }
 
@@ -303,18 +400,36 @@ function lower(value) {
     .toLowerCase()
 }
 
+const MAX_RECOMMENDATIONS_PER_TASK = 3
+
 /**
  * @param {Record<string, unknown> | null | undefined} task
- * @returns {ReturnType<typeof buildRecommendation> | null}
+ * @returns {ReturnType<typeof buildRecommendation>[]}
  */
-export function recommendTechForTask(task) {
-  if (!task || typeof task !== 'object') return null
+export function recommendTechStackForTask(task) {
+  if (!task || typeof task !== 'object') return []
 
   const name = lower(task.task_name)
   const inputType = lower(task.input_data_type)
   const regulatory = task.regulatory_constraint === true
 
-  if (regulatory) return null
+  /** @type {ReturnType<typeof buildRecommendation>[]} */
+  const out = []
+  const seen = new Set()
+
+  /**
+   * @param {Record<string, unknown>} tech
+   * @param {string} rationale
+   * @param {'primary' | 'complementary'} [fit]
+   */
+  const add = (tech, rationale, fit = 'primary') => {
+    const id = String(tech.id ?? '')
+    if (!id || seen.has(id) || out.length >= MAX_RECOMMENDATIONS_PER_TASK) return
+    seen.add(id)
+    out.push(buildRecommendation(tech, task, rationale, fit))
+  }
+
+  if (regulatory) return []
 
   if (
     name.includes('fraud investigation') ||
@@ -325,7 +440,7 @@ export function recommendTechForTask(task) {
     name.includes('sox audit') ||
     (name.includes('compliance audit') && name.includes('sox'))
   ) {
-    return null
+    return []
   }
 
   if (
@@ -335,37 +450,62 @@ export function recommendTechForTask(task) {
     name.includes('guidance authoring') ||
     (name.includes('specialist coaching') && !name.includes('system'))
   ) {
-    return null
+    return []
   }
 
   if (
     (name.includes('spam') || name.includes('bot')) &&
     (name.includes('email') || name.includes('vendor email') || name.includes('filter'))
   ) {
-    return null
+    return []
   }
 
-  if (name.includes('reconcil') || name.includes('recon break') || name.includes('settlement matching')) {
-    return buildRecommendation(
+  const isReportingTask =
+    name.includes('operational report') ||
+    (name.includes('daily') && name.includes('report')) ||
+    (name.includes('weekly') && name.includes('report')) ||
+    name.includes('compile') ||
+    name.includes('dashboard') ||
+    (name.includes('transaction') && name.includes('volume')) ||
+    (name.includes('report') && !name.includes('financial statement'))
+
+  const isReconTask =
+    name.includes('reconcil') || name.includes('recon break') || name.includes('settlement matching')
+  const isMultiEntity =
+    name.includes('multi-entity') || name.includes('intercompany') || name.includes('multi entity')
+
+  if (isReconTask) {
+    add(
       TECH_STACK.blackline,
-      task,
       'BlackLine specializes in reconciliation automation — 70%+ straight-through match on routine breaks.',
     )
+    if (isMultiEntity) {
+      add(
+        TECH_STACK.sap_s4hana,
+        'SAP S/4HANA provides multi-entity GL, consolidation, and chart-of-accounts backbone for complex reconciliations.',
+        'complementary',
+      )
+    }
   }
 
-  if (name.includes('intercompany') && (name.includes('settlement') || name.includes('matching') || name.includes('reconcil'))) {
-    return buildRecommendation(
+  if (name.includes('intercompany') && (name.includes('settlement') || name.includes('matching'))) {
+    add(
       TECH_STACK.blackline,
-      task,
-      'BlackLine supports multi-entity and intercompany reconciliation with match-and-adjust workflows.',
+      'BlackLine supports intercompany matching, settlement, and exception workflows.',
+    )
+    add(
+      TECH_STACK.sap_s4hana,
+      'SAP feeds intercompany balances and elimination rules into the reconciliation process.',
+      'complementary',
     )
   }
 
   if (name.includes('payment file') && (name.includes('upload') || name.includes('valid'))) {
-    return buildRecommendation(
-      TECH_STACK.highradius,
-      task,
-      'HighRadius ingests and validates payment files against AR and cash application rules.',
+    add(TECH_STACK.highradius, 'HighRadius ingests and validates payment files against AR and cash application rules.')
+    add(
+      TECH_STACK.oracle_fusion,
+      'Oracle Fusion cash management can post validated payment files into the GL.',
+      'complementary',
     )
   }
 
@@ -373,11 +513,7 @@ export function recommendTechForTask(task) {
     name.includes('invoice') &&
     (name.includes('data entry') || name.includes('process') || name.includes('capture') || name.includes('routine'))
   ) {
-    return buildRecommendation(
-      TECH_STACK.highradius,
-      task,
-      'HighRadius automates AR/invoice workflows with 90%+ accuracy on structured PDFs.',
-    )
+    add(TECH_STACK.highradius, 'HighRadius automates AR/invoice workflows with 90%+ accuracy on structured PDFs.')
   }
 
   if (
@@ -389,19 +525,18 @@ export function recommendTechForTask(task) {
       name.includes('triage') ||
       name.includes('response'))
   ) {
-    return buildRecommendation(
-      TECH_STACK.coupa,
-      task,
-      'Coupa handles vendor lifecycle, inquiry triage, and procurement workflows end-to-end.',
-    )
+    add(TECH_STACK.coupa, 'Coupa handles vendor lifecycle, inquiry triage, and procurement workflows end-to-end.')
+    if (name.includes('inquiry') || name.includes('triage') || name.includes('response')) {
+      add(
+        TECH_STACK.zendesk,
+        'Zendesk can route and track vendor inquiries when communication is ticket-based.',
+        'complementary',
+      )
+    }
   }
 
   if (name.includes('expense') && (name.includes('classification') || name.includes('approval'))) {
-    return buildRecommendation(
-      TECH_STACK.oracle_fusion,
-      task,
-      'Oracle Fusion automates expense routing and approval policy enforcement.',
-    )
+    add(TECH_STACK.oracle_fusion, 'Oracle Fusion automates expense routing and approval policy enforcement.')
   }
 
   if (
@@ -410,81 +545,72 @@ export function recommendTechForTask(task) {
     (name.includes('reporting') && name.includes('review')) ||
     (name.includes('reporting') && name.includes('adjustment'))
   ) {
-    return buildRecommendation(
-      TECH_STACK.anaplan,
-      task,
-      'Anaplan provides connected planning and reporting with audit-grade controls.',
-    )
+    add(TECH_STACK.anaplan, 'Anaplan provides connected planning and reporting with audit-grade controls.')
+    if (name.includes('reconcil') || name.includes('adjustment')) {
+      add(
+        TECH_STACK.blackline,
+        'BlackLine ties reporting adjustments back to reconciled balances and audit trails.',
+        'complementary',
+      )
+    }
   }
 
   if (
     (name.includes('subscription') || name.includes('billing')) &&
     (name.includes('recurring') || name.includes('subscription'))
   ) {
-    return buildRecommendation(
-      TECH_STACK.zuora,
-      task,
-      'Zuora is purpose-built for subscription billing and revenue recognition.',
-    )
+    add(TECH_STACK.zuora, 'Zuora is purpose-built for subscription billing and revenue recognition.')
   }
 
-  if (name.includes('ticket') || name.includes('triage') || name.includes('routing') || name.includes('inquiry')) {
+  if (
+    (name.includes('ticket') ||
+      name.includes('triage') ||
+      name.includes('inquiry') ||
+      (name.includes('routing') && !name.includes('expense') && !name.includes('approval'))) &&
+    !name.includes('vendor')
+  ) {
     if (name.includes('it') || name.includes('incident') || name.includes('support ticket')) {
-      return buildRecommendation(
-        TECH_STACK.servicenow,
-        task,
-        'ServiceNow ITSM automates ticket triage, routing, and SLA management.',
-      )
+      add(TECH_STACK.servicenow, 'ServiceNow ITSM automates ticket triage, routing, and SLA management.')
+    } else {
+      add(TECH_STACK.zendesk, 'Zendesk handles inquiry routing and ticket workflows with built-in AI triage.')
     }
-    return buildRecommendation(
-      TECH_STACK.zendesk,
-      task,
-      'Zendesk handles inquiry routing and ticket workflows with built-in AI triage.',
-    )
   }
 
   if (name.includes('lead') || name.includes('crm') || name.includes('customer record')) {
     if (name.includes('enterprise') || name.includes('account')) {
-      return buildRecommendation(
-        TECH_STACK.salesforce_crm,
-        task,
-        'Salesforce Einstein automates lead scoring, routing, and engagement workflows.',
+      add(TECH_STACK.salesforce_crm, 'Salesforce Einstein automates lead scoring, routing, and engagement workflows.')
+    } else {
+      add(TECH_STACK.hubspot, 'HubSpot CRM automates lead capture and customer engagement workflows.')
+    }
+  }
+
+  if (isReportingTask) {
+    if (inputType === 'structured' || name.includes('transaction') || name.includes('volume')) {
+      add(TECH_STACK.snowflake, 'Snowflake handles aggregation queries and dashboards over structured transaction data.')
+    }
+    add(
+      TECH_STACK.ms_fabric,
+      'Microsoft Fabric unifies data engineering, semantic models, and operational reporting.',
+      out.some((r) => r.tech_id === TECH_STACK.snowflake.id) ? 'complementary' : 'primary',
+    )
+    if (name.includes('predict') || name.includes('forecast')) {
+      add(
+        TECH_STACK.databricks,
+        'Databricks adds forecasting and anomaly models on top of the reporting data pipeline.',
+        'complementary',
       )
     }
-    return buildRecommendation(
-      TECH_STACK.hubspot,
-      task,
-      'HubSpot CRM automates lead capture and customer engagement workflows.',
-    )
   }
 
   if (
-    name.includes('operational report') ||
-    (name.includes('daily') && name.includes('report')) ||
-    (name.includes('weekly') && name.includes('report')) ||
-    name.includes('compile') ||
-    name.includes('dashboard') ||
-    (name.includes('report') && !name.includes('financial statement'))
+    !isReportingTask &&
+    (name.includes('predict') || name.includes('anomaly') || name.includes('forecast') || name.includes('ml model'))
   ) {
-    if (inputType === 'structured') {
-      return buildRecommendation(
-        TECH_STACK.snowflake,
-        task,
-        'Snowflake handles aggregation queries and dashboards over structured data.',
-      )
-    }
-    return buildRecommendation(
-      TECH_STACK.ms_fabric,
-      task,
-      'Microsoft Fabric unifies data engineering and reporting in one platform.',
-    )
-  }
-
-  if (name.includes('predict') || name.includes('anomaly') || name.includes('forecast') || name.includes('ml model')) {
-    return buildRecommendation(
-      TECH_STACK.databricks,
-      task,
-      'Databricks supports ML model development, training, and serving at scale.',
+    add(TECH_STACK.databricks, 'Databricks supports ML model development, training, and serving at scale.')
+    add(
+      TECH_STACK.snowflake,
+      'Snowflake stores feature data and model outputs for downstream reporting.',
+      'complementary',
     )
   }
 
@@ -494,22 +620,23 @@ export function recommendTechForTask(task) {
     name.includes('employee onboard') ||
     (name.includes('hr') && !name.includes('through'))
   ) {
-    return buildRecommendation(
-      TECH_STACK.workday,
-      task,
-      'Workday automates payroll, benefits administration, and HR workflows.',
-    )
+    add(TECH_STACK.workday, 'Workday automates payroll, benefits administration, and HR workflows.')
   }
 
   if (name.includes('schedul') || name.includes('workforce')) {
-    return buildRecommendation(
-      TECH_STACK.ms_dynamics_365,
-      task,
-      'Microsoft Dynamics 365 supports workforce scheduling and resource planning.',
-    )
+    add(TECH_STACK.ms_dynamics_365, 'Microsoft Dynamics 365 supports workforce scheduling and resource planning.')
   }
 
-  return null
+  return out
+}
+
+/**
+ * @param {Record<string, unknown> | null | undefined} task
+ * @returns {ReturnType<typeof buildRecommendation> | null}
+ */
+export function recommendTechForTask(task) {
+  const stack = recommendTechStackForTask(task)
+  return stack[0] ?? null
 }
 
 /**

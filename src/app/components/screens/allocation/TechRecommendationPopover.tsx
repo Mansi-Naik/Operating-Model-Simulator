@@ -1,17 +1,22 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { getConsiderationsForCategory } from '../../../../lib/techStackLibrary';
+import { TechBrandLogo } from './TechBrandLogo';
 
 export type TechRecommendation = {
   tech_id: string;
   tech_name: string;
   logo: string;
+  logo_alt?: string;
+  logo_domain?: string;
+  brand_abbrev?: string;
   annual_cost_usd: number;
   category: string;
   setup_weeks: string;
   maintenance_hours_monthly: string;
   rationale: string;
   task_name: string;
+  fit?: 'primary' | 'complementary';
 };
 
 interface TechRecommendationPopoverProps {
@@ -22,31 +27,6 @@ interface TechRecommendationPopoverProps {
 
 function formatUsd(amount: number): string {
   return `$${Math.round(amount).toLocaleString('en-US')}`;
-}
-
-function TechLogo({ name, logo }: { name: string; logo: string }) {
-  const [failed, setFailed] = useState(false);
-  const initial = name.trim().charAt(0).toUpperCase() || '?';
-
-  if (failed) {
-    return (
-      <div
-        className="w-12 h-12 rounded-lg bg-[#FD4E59] text-white flex items-center justify-center text-[18px] font-bold shrink-0"
-        aria-hidden
-      >
-        {initial}
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={logo}
-      alt=""
-      className="w-12 h-12 rounded-lg object-contain bg-[#FDF8F4] border border-[#494949]/10 shrink-0"
-      onError={() => setFailed(true)}
-    />
-  );
 }
 
 export function TechRecommendationPopover({
@@ -95,12 +75,27 @@ export function TechRecommendationPopover({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start gap-3 mb-3">
-          <TechLogo name={recommendation.tech_name} logo={recommendation.logo} />
+          <TechBrandLogo
+            name={recommendation.tech_name}
+            logo={recommendation.logo}
+            logoAlt={recommendation.logo_alt}
+            brandAbbrev={recommendation.brand_abbrev}
+            size="md"
+          />
           <div className="flex-1 min-w-0 pt-0.5">
             <h3 id="tech-popover-title" className="text-[16px] font-bold text-[#161916] leading-tight pr-6">
               {recommendation.tech_name}
             </h3>
             <p className="text-[12px] text-[#6D7069]">{recommendation.category}</p>
+            {recommendation.fit === 'complementary' ? (
+              <span className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-[#FFF0DC] text-[#6D7069]">
+                Complementary fit
+              </span>
+            ) : (
+              <span className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-[#E2EFDA] text-[#548235]">
+                Primary fit
+              </span>
+            )}
           </div>
           <button
             type="button"

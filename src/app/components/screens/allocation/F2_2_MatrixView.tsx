@@ -470,7 +470,7 @@ export function F2_2_MatrixView({
             <tr className="bg-[#FDF8F4] border-b border-[#494949]/8">
               <th className="px-4 py-3 text-left text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide w-16">#</th>
               <th className="px-4 py-3 text-left text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide">Task</th>
-              <th className="px-2 py-3 text-center text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide w-[72px]">
+              <th className="px-2 py-3 text-center text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide w-[120px]">
                 Tech
               </th>
               <th className="px-4 py-3 text-left text-[13px] font-semibold text-[#6D7069] uppercase tracking-wide w-32">Role</th>
