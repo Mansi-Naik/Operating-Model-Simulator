@@ -4,6 +4,14 @@
 
 const DEFAULT_IMPLEMENTATION_PATHS = Object.freeze(['configure', 'pilot', 'rollout', 'monitor'])
 const RISK_SCORE = Object.freeze({ low: 1, medium: 2, high: 3, critical: 4 })
+const WEEKS_PER_MONTH = 4.345
+const DEFAULT_TIMELINE_TOTAL_WEEKS = 30
+const BASE_PHASE_TEMPLATE = Object.freeze([
+  { id: 1, name: 'Foundation', start: 1, end: 6 },
+  { id: 2, name: 'Pilot', start: 5, end: 12 },
+  { id: 3, name: 'Scale', start: 10, end: 22 },
+  { id: 4, name: 'Optimize', start: 18, end: 30 },
+])
 
 /**
  * @param {unknown} value
@@ -157,6 +165,70 @@ function effortWeeks(capability) {
  */
 function intakeData(engagement) {
   return asObj(engagement?.intake_data)
+}
+
+/**
+ * @param {Record<string, unknown> | null | undefined} engagement
+ * @returns {number | null}
+ */
+function readExpectedImplementationMonths(engagement) {
+  const prefs = asObj(intakeData(engagement).preferences)
+  const n = toNum(prefs.expected_implementation_months)
+  if (n < 1 || n > 36) return null
+  return Math.round(n)
+}
+
+/**
+ * @param {Record<string, unknown> | null | undefined} engagement
+ * @returns {number | null}
+ */
+export function weeksFromClientExpectedImplementation(engagement) {
+  const months = readExpectedImplementationMonths(engagement)
+  if (months == null) return null
+  return Math.max(4, Math.round(months * WEEKS_PER_MONTH))
+}
+
+/**
+ * @param {number} targetWeeks
+ * @returns {Array<{ id: number, name: string, start: number, end: number }>}
+ */
+function scalePhaseTemplateToTotalWeeks(targetWeeks) {
+  const target = Math.max(4, Math.round(targetWeeks))
+  const scale = target / DEFAULT_TIMELINE_TOTAL_WEEKS
+  const scaled = BASE_PHASE_TEMPLATE.map((meta) => ({
+    id: meta.id,
+    name: meta.name,
+    start: Math.max(1, Math.round(meta.start * scale)),
+    end: Math.max(2, Math.round(meta.end * scale)),
+  }))
+
+  scaled[0].start = 1
+  scaled[scaled.length - 1].end = target
+
+  for (let i = 1; i < scaled.length; i++) {
+    if (scaled[i].start >= scaled[i].end) scaled[i].start = Math.max(1, scaled[i].end - 1)
+    if (scaled[i].start > scaled[i - 1].end) {
+      scaled[i].start = Math.max(1, scaled[i - 1].end - 1)
+    }
+  }
+
+  for (const phase of scaled) {
+    if (phase.end > target) phase.end = target
+    if (phase.end <= phase.start) phase.end = Math.min(target, phase.start + 1)
+  }
+
+  scaled[scaled.length - 1].end = target
+  return scaled
+}
+
+/**
+ * @param {Record<string, unknown> | null | undefined} engagement
+ * @returns {Array<{ id: number, name: string, start: number, end: number }>}
+ */
+function phaseMetaForEngagement(engagement) {
+  const clientWeeks = weeksFromClientExpectedImplementation(engagement)
+  if (clientWeeks != null) return scalePhaseTemplateToTotalWeeks(clientWeeks)
+  return BASE_PHASE_TEMPLATE.map((meta) => ({ ...meta }))
 }
 
 /**
@@ -504,12 +576,7 @@ export function groupNodesIntoPhases(graph, criticalPath, engagement) {
     assign(3, String(node.id))
   }
 
-  const phaseMeta = [
-    { id: 1, name: 'Foundation', start: 1, end: 6 },
-    { id: 2, name: 'Pilot', start: 5, end: 12 },
-    { id: 3, name: 'Scale', start: 10, end: 22 },
-    { id: 4, name: 'Optimize', start: 18, end: 30 },
-  ]
+  const phaseMeta = phaseMetaForEngagement(engagement)
   const redesigns = f3Redesigns(engagement)
 
   return phaseMeta.map((meta, idx) => {
@@ -570,7 +637,10 @@ function deliverablesForPhase(phaseId, nodeIds) {
  */
 export function computeTimelineSummary(phases, criticalPath, engagement) {
   const list = Array.isArray(phases) ? phases : []
-  const totalWeeks = list.reduce((max, phase) => Math.max(max, nonNeg(phase.end_week)), 0)
+  const phaseMaxWeeks = list.reduce((max, phase) => Math.max(max, nonNeg(phase.end_week)), 0)
+  const clientMonths = readExpectedImplementationMonths(engagement)
+  const clientWeeks = weeksFromClientExpectedImplementation(engagement)
+  const totalWeeks = clientWeeks ?? phaseMaxWeeks
   const deployments = new Set()
   for (const phase of list) {
     const ids = Array.isArray(phase.nodes) ? phase.nodes : []
@@ -581,14 +651,21 @@ export function computeTimelineSummary(phases, criticalPath, engagement) {
   const parallelMax = Math.max(1, 1 + parallelBranches.length)
   const goals = asObj(asObj(intakeData(engagement).engagement).goals)
   const timelineMonths = nonNeg(goals.timeline_months ?? intakeData(engagement).timeline_months)
-  const durationMonths = totalWeeks / 4.345
+  const durationMonths = totalWeeks / WEEKS_PER_MONTH
 
   return {
     total_duration_weeks: totalWeeks,
-    total_duration_months: Math.round(durationMonths * 10) / 10,
+    total_duration_months:
+      clientMonths != null ? clientMonths : Math.round(durationMonths * 10) / 10,
+    client_expected_months: clientMonths,
     phases_count: 4,
     deployments_count: deployments.size,
     parallel_streams_max: parallelMax,
-    within_client_timeline: timelineMonths > 0 ? durationMonths <= timelineMonths : true,
+    within_client_timeline:
+      clientMonths != null
+        ? true
+        : timelineMonths > 0
+          ? durationMonths <= timelineMonths
+          : true,
   }
 }

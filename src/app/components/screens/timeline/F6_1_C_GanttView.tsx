@@ -62,12 +62,6 @@ function fmtInt(value: unknown): string {
   return Math.round(toNum(value)).toLocaleString('en-US');
 }
 
-function fmtMonths(value: unknown): string {
-  const n = toNum(value);
-  if (!Number.isFinite(n)) return '0';
-  return n % 1 === 0 ? String(n) : n.toFixed(1);
-}
-
 function weekPct(week: number, totalWeeks: number): number {
   const span = Math.max(1, totalWeeks - 1);
   return Math.max(0, Math.min(100, ((week - 1) / span) * 100));
@@ -75,18 +69,65 @@ function weekPct(week: number, totalWeeks: number): number {
 
 function phaseLabel(phase: TimelinePhase): string {
   const name = String(phase.phase_name ?? '').trim().toUpperCase() || 'PHASE';
-  return `${name} (Wk ${fmtInt(phase.start_week)}-${fmtInt(phase.end_week)})`;
+  return `${name} (W${fmtInt(phase.start_week)}–W${fmtInt(phase.end_week)})`;
+}
+
+function startOfWeekMonday(date: Date): Date {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function resolveTimelineStartDate(engagement: Record<string, unknown> | null | undefined): Date {
+  const raw = engagement?.created_at ?? engagement?.updated_at;
+  if (raw) {
+    const parsed = new Date(String(raw));
+    if (!Number.isNaN(parsed.getTime())) return startOfWeekMonday(parsed);
+  }
+  return startOfWeekMonday(new Date());
+}
+
+function weekStartDate(timelineStart: Date, week: number): Date {
+  const d = new Date(timelineStart);
+  d.setDate(d.getDate() + (week - 1) * 7);
+  return d;
+}
+
+function formatAxisDate(date: Date): string {
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatCompactDate(date: Date): string {
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+type WeekAxisMarker = {
+  week: number;
+  label: string;
+  dateLabel: string;
+  showDate: boolean;
+};
+
+function buildWeekAxis(totalWeeks: number, timelineStart: Date): WeekAxisMarker[] {
+  const step = totalWeeks <= 12 ? 1 : totalWeeks <= 24 ? 2 : 4;
+  const weeks: number[] = [];
+  for (let week = 1; week <= totalWeeks; week += step) weeks.push(week);
+  if (!weeks.includes(totalWeeks)) weeks.push(totalWeeks);
+  if (!weeks.includes(1)) weeks.unshift(1);
+
+  return weeks.map((week) => ({
+    week,
+    label: `W${week}`,
+    dateLabel: formatCompactDate(weekStartDate(timelineStart, week)),
+    showDate: week === 1 || week === totalWeeks || step === 1,
+  }));
 }
 
 function deploymentIcon(type: string): string {
   return type === 'full' ? '🤖' : '⚡';
-}
-
-function weekMarkers(totalWeeks: number): number[] {
-  const markers = [1];
-  for (let week = 4; week <= totalWeeks; week += 4) markers.push(week);
-  if (!markers.includes(totalWeeks)) markers.push(totalWeeks);
-  return markers;
 }
 
 function barColor(priority: GanttBar['priority']): string {
@@ -249,7 +290,11 @@ export function F6_1_C_GanttView({
   );
 
   const totalWeeks = Math.max(1, Math.round(toNum(summary.total_duration_weeks, 30)));
-  const markers = weekMarkers(totalWeeks);
+  const timelineStart = useMemo(
+    () => resolveTimelineStartDate(engagement as Record<string, unknown> | null | undefined),
+    [engagement],
+  );
+  const weekAxis = useMemo(() => buildWeekAxis(totalWeeks, timelineStart), [totalWeeks, timelineStart]);
   const chartHeight = Math.max(420, phases.length * 118);
   const laneHeight = phases.length > 0 ? chartHeight / phases.length : chartHeight;
   const criticalPoints = criticalIds
@@ -322,7 +367,10 @@ export function F6_1_C_GanttView({
           </span>
         </div>
         <p className="text-[13px] text-[#6D7069]">
-          {fmtMonths(summary.total_duration_months)} months · 4 phases · {fmtInt(summary.deployments_count)} deployments
+          {fmtInt(totalWeeks)} weeks · 4 phases · {fmtInt(summary.deployments_count)} deployments
+        </p>
+        <p className="text-[12px] text-[#6D7069] mt-1">
+          Timeline start: {formatAxisDate(timelineStart)} (W1)
         </p>
       </div>
 
@@ -330,14 +378,23 @@ export function F6_1_C_GanttView({
         <div className="bg-white border border-[#494949]/12 rounded-xl p-5 shadow-sm">
           <div className="grid grid-cols-[190px_1fr] border-b border-[#494949]/12 pb-3 mb-3">
             <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide">Phase</div>
-            <div className="relative h-6">
-              {markers.map((week) => (
+            <div className="relative h-12">
+              {weekAxis.map((marker) => (
                 <div
-                  key={week}
-                  className="absolute top-0 -translate-x-1/2 text-[11px] text-[#6D7069]"
-                  style={{ left: `${weekPct(week, totalWeeks)}%` }}
+                  key={marker.week}
+                  className="absolute top-0 -translate-x-1/2 text-center min-w-[52px]"
+                  style={{ left: `${weekPct(marker.week, totalWeeks)}%` }}
                 >
-                  W{week}
+                  <div className="text-[11px] font-semibold text-[#161916]">{marker.label}</div>
+                  {marker.showDate ? (
+                    <div
+                      className={`text-[10px] whitespace-nowrap ${
+                        marker.week === 1 ? 'text-[#161916] font-medium' : 'text-[#6D7069]'
+                      }`}
+                    >
+                      {marker.dateLabel}
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -376,11 +433,11 @@ export function F6_1_C_GanttView({
                 />
               ))}
 
-              {markers.map((week) => (
+              {weekAxis.map((marker) => (
                 <div
-                  key={week}
+                  key={marker.week}
                   className="absolute top-0 bottom-0 w-px bg-[#494949] opacity-8"
-                  style={{ left: `${weekPct(week, totalWeeks)}%` }}
+                  style={{ left: `${weekPct(marker.week, totalWeeks)}%` }}
                 />
               ))}
 
