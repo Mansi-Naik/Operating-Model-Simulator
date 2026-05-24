@@ -118,6 +118,13 @@ export default function App() {
   };
 
   const handleProceedToF5 = () => {
+    if (activeEngagementId && typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('engagementId') !== activeEngagementId) {
+        url.searchParams.set('engagementId', activeEngagementId);
+        window.history.replaceState({}, '', url.toString());
+      }
+    }
     setCurrentFeature('f5');
     setCurrentScreen('economics');
   };
@@ -253,6 +260,7 @@ export default function App() {
         return (
           <Economics
             key={`economics-${activeEngagementId ?? 'none'}`}
+            engagementId={activeEngagementId}
             onBack={() => setCurrentScreen('pod-structure')}
             onProceedToF6={handleProceedToF6}
             onMissingF4Selection={handleMissingF4Selection}

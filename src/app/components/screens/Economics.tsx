@@ -9,36 +9,44 @@ import { F5_2_AssumptionEditor } from './economics/F5_2_AssumptionEditor';
 type EconomicsView = 'pre-run' | 'dashboard';
 
 interface EconomicsProps {
+  engagementId?: string | null;
   onBack?: () => void;
   onProceedToF6?: () => void;
   onMissingF4Selection?: () => void;
   onGoToF1Preferences?: () => void;
 }
 
-export function Economics({ onBack, onProceedToF6, onMissingF4Selection, onGoToF1Preferences }: EconomicsProps) {
+export function Economics({
+  engagementId,
+  onBack,
+  onProceedToF6,
+  onMissingF4Selection,
+  onGoToF1Preferences,
+}: EconomicsProps) {
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
+  const activeEngagementId = engagementId ?? engagementIdFromUrl;
   const [view, setView] = useState<EconomicsView>('pre-run');
   const [showAssumptionEditor, setShowAssumptionEditor] = useState(false);
   const [assumptionVersion, setAssumptionVersion] = useState(0);
   const { isLoading: pipelineLoading, refresh: refreshPipeline } = usePipelineCacheEntry(
     'f5',
-    engagementIdFromUrl,
+    activeEngagementId,
   );
   const goToDashboard = useCallback(() => setView('dashboard'), []);
-  useMountPipelineCacheRedirect('f5', engagementIdFromUrl, goToDashboard, {
+  useMountPipelineCacheRedirect('f5', activeEngagementId, goToDashboard, {
     enabled: view === 'pre-run',
   });
 
   const handleReRun = useCallback(async () => {
-    if (!engagementIdFromUrl) {
+    if (!activeEngagementId) {
       throw new Error('Missing engagement');
     }
-    await clearF5SavedState(engagementIdFromUrl);
+    await clearF5SavedState(activeEngagementId);
     await refreshPipeline();
     setAssumptionVersion((v) => v + 1);
     setView('dashboard');
-  }, [engagementIdFromUrl, refreshPipeline]);
+  }, [activeEngagementId, refreshPipeline]);
 
   if (view === 'pre-run') {
     if (pipelineLoading) {
@@ -46,14 +54,14 @@ export function Economics({ onBack, onProceedToF6, onMissingF4Selection, onGoToF
     }
 
     return (
-      <PipelinePreRunGate feature="f5" engagementId={engagementIdFromUrl} onSkipToResults={goToDashboard}>
+      <PipelinePreRunGate feature="f5" engagementId={activeEngagementId} onSkipToResults={goToDashboard}>
         <EconomicsPreRun onBack={onBack} onGenerate={goToDashboard} />
       </PipelinePreRunGate>
     );
   }
 
   return (
-    <div className="relative h-full" key={`economics-shell-${engagementIdFromUrl ?? 'none'}-${assumptionVersion}`}>
+    <div className="relative h-full" key={`economics-shell-${activeEngagementId ?? 'none'}-${assumptionVersion}`}>
       {showAssumptionEditor && (
         <div
           className="absolute inset-0 bg-black/20 z-40"
@@ -64,6 +72,7 @@ export function Economics({ onBack, onProceedToF6, onMissingF4Selection, onGoToF
       <div className={showAssumptionEditor ? 'opacity-100' : ''}>
         <F5_1_EconomicsDashboard
           key={`f5-dashboard-${assumptionVersion}`}
+          engagementId={activeEngagementId}
           onEditAssumptions={() => setShowAssumptionEditor(true)}
           onBack={onBack}
           onProceedToF6={onProceedToF6}

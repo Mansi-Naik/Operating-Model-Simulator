@@ -327,6 +327,7 @@ export function useEngagement(engagementId) {
     if (!isUuid(engagementId)) {
       setEngagement(null);
       setTasks([]);
+      setLoading(false);
       setError(`Invalid engagementId (expected UUID): "${String(engagementId)}"`);
       return;
     }

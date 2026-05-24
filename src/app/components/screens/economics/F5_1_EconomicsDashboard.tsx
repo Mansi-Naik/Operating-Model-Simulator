@@ -22,6 +22,7 @@ import {
 import { supabase } from '../../../../supabaseClient';
 
 interface F5_1_EconomicsDashboardProps {
+  engagementId?: string | null;
   onEditAssumptions: () => void;
   onBack?: () => void;
   onProceedToF6?: () => void;
@@ -30,6 +31,11 @@ interface F5_1_EconomicsDashboardProps {
   /** Opens F1 guided intake at Preferences (step 7) for billing model. */
   onGoToF1Preferences?: () => void;
   refreshKey?: number;
+}
+
+function isMissingColumnError(message: string | undefined): boolean {
+  if (!message) return false;
+  return message.includes('does not exist') || message.includes('column');
 }
 
 function asObj(value: unknown): Record<string, unknown> {
@@ -253,6 +259,7 @@ function SavingsCurveChart({ curve, paybackMonth }: { curve: Record<string, unkn
 }
 
 export function F5_1_EconomicsDashboard({
+  engagementId,
   onEditAssumptions,
   onBack,
   onProceedToF6,
@@ -264,8 +271,9 @@ export function F5_1_EconomicsDashboard({
   void onBack;
   const engagementIdFromUrl =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('engagementId') : null;
+  const activeEngagementId = engagementId ?? engagementIdFromUrl;
 
-  const { engagement, tasks, loading: engagementLoading, error: engagementError, loadEngagement } = useEngagement(engagementIdFromUrl);
+  const { engagement, tasks, loading: engagementLoading, error: engagementError, loadEngagement } = useEngagement(activeEngagementId);
   const [pipelineLoading, setPipelineLoading] = useState(true);
   const [pipelineError, setPipelineError] = useState<string | null>(null);
   const [pipelineId, setPipelineId] = useState<string | null>(null);
@@ -285,7 +293,7 @@ export function F5_1_EconomicsDashboard({
   const [competitorError, setCompetitorError] = useState<string | null>(null);
 
   const generateCompetitorAnalysis = useCallback(async () => {
-    if (!engagementIdFromUrl) return;
+    if (!activeEngagementId) return;
     setIsLoadingCompetitor(true);
     setCompetitorError(null);
     try {
@@ -294,7 +302,7 @@ export function F5_1_EconomicsDashboard({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'competitor_analysis',
-          engagement_id: engagementIdFromUrl,
+          engagement_id: activeEngagementId,
         }),
       });
       const responseText = await response.text();
@@ -315,7 +323,7 @@ export function F5_1_EconomicsDashboard({
     } finally {
       setIsLoadingCompetitor(false);
     }
-  }, [engagementIdFromUrl]);
+  }, [activeEngagementId]);
 
   const handleCompetitorClick = useCallback(() => {
     if (showCompetitorAnalysis) {
@@ -329,14 +337,14 @@ export function F5_1_EconomicsDashboard({
   }, [showCompetitorAnalysis, competitorData, isLoadingCompetitor, generateCompetitorAnalysis]);
 
   const generateReinvestment = useCallback(async () => {
-    if (!engagementIdFromUrl) return;
+    if (!activeEngagementId) return;
     setIsLoadingReinvestment(true);
     setReinvestmentError(null);
     try {
       const response = await fetch('/api/generate-reinvestment-opportunities', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ engagement_id: engagementIdFromUrl }),
+        body: JSON.stringify({ engagement_id: activeEngagementId }),
       });
       const responseText = await response.text();
       if (!response.ok) {
@@ -356,70 +364,89 @@ export function F5_1_EconomicsDashboard({
     } finally {
       setIsLoadingReinvestment(false);
     }
-  }, [engagementIdFromUrl]);
+  }, [activeEngagementId]);
 
   const loadPipeline = useCallback(async () => {
-    if (!engagementIdFromUrl) {
+    if (!activeEngagementId) {
       setPipelineError('Missing engagement');
       setPipelineLoading(false);
       return;
     }
     setPipelineLoading(true);
     setPipelineError(null);
-    const { data, error } = await supabase
-      .from('pipeline_runs')
-      .select('id, f3_roles, f4_pods, f5_economics')
-      .eq('engagement_id', engagementIdFromUrl)
-      .maybeSingle();
+    try {
+      let data: Record<string, unknown> | null = null;
+      const extended = await supabase
+        .from('pipeline_runs')
+        .select('id, f3_roles, f4_pods, f5_economics, competitor_analysis, reinvestment_opportunities')
+        .eq('engagement_id', activeEngagementId)
+        .maybeSingle();
 
-    if (error) {
-      setPipelineError(error.message);
+      if (extended.error && isMissingColumnError(extended.error.message)) {
+        const base = await supabase
+          .from('pipeline_runs')
+          .select('id, f3_roles, f4_pods, f5_economics')
+          .eq('engagement_id', activeEngagementId)
+          .maybeSingle();
+        if (base.error) {
+          setPipelineError(base.error.message);
+          setPipelineId(null);
+          setF3Roles([]);
+          setF4Pods(null);
+          setCompetitorData(null);
+          setReinvestmentData(null);
+          return;
+        }
+        data = base.data as Record<string, unknown> | null;
+        setCompetitorData(null);
+        setReinvestmentData(null);
+      } else if (extended.error) {
+        setPipelineError(extended.error.message);
+        setPipelineId(null);
+        setF3Roles([]);
+        setF4Pods(null);
+        setCompetitorData(null);
+        setReinvestmentData(null);
+        return;
+      } else {
+        data = extended.data as Record<string, unknown> | null;
+        const cachedCompetitor = parseJsonColumn(data?.competitor_analysis);
+        setCompetitorData(cachedCompetitor ? (cachedCompetitor as CompetitorAnalysisData) : null);
+        const cachedReinvestment = parseJsonColumn(data?.reinvestment_opportunities);
+        setReinvestmentData(cachedReinvestment ? (cachedReinvestment as ReinvestmentData) : null);
+      }
+
+      setPipelineId(typeof data?.id === 'string' ? data.id : null);
+      setF3Roles(normalizeF3Roles(data?.f3_roles).redesigns as Record<string, unknown>[]);
+      setF4Pods(parseF4Pods(data?.f4_pods));
+      const savedEconomics = asObj(data?.f5_economics);
+      const hasSaved = Boolean(savedEconomics.economics_result);
+      setCachedF5Payload(hasSaved ? savedEconomics : null);
+      setAssumptionsUsed(hasSaved ? asObj(savedEconomics.assumptions_used) : {});
+      setHasSavedEconomics(hasSaved);
+      const cachedNarrative =
+        typeof savedEconomics.sensitivity_narrative === 'string' ? savedEconomics.sensitivity_narrative : '';
+      setSensitivityNarrative(cachedNarrative);
+      narrativeFetchedRef.current = Boolean(cachedNarrative.trim());
+    } catch (err) {
+      console.error('[F5] loadPipeline failed:', err);
+      setPipelineError(err instanceof Error ? err.message : 'Failed to load pipeline data');
       setPipelineId(null);
       setF3Roles([]);
       setF4Pods(null);
       setCompetitorData(null);
+      setReinvestmentData(null);
+    } finally {
       setPipelineLoading(false);
-      return;
     }
-
-    setPipelineId(typeof data?.id === 'string' ? data.id : null);
-    setF3Roles(normalizeF3Roles(data?.f3_roles).redesigns as Record<string, unknown>[]);
-    setF4Pods(parseF4Pods(data?.f4_pods));
-    const savedEconomics = asObj(data?.f5_economics);
-    const hasSaved = Boolean(savedEconomics.economics_result);
-    setCachedF5Payload(hasSaved ? savedEconomics : null);
-    setAssumptionsUsed(hasSaved ? asObj(savedEconomics.assumptions_used) : {});
-    setHasSavedEconomics(hasSaved);
-    const cachedNarrative =
-      typeof savedEconomics.sensitivity_narrative === 'string' ? savedEconomics.sensitivity_narrative : '';
-    setSensitivityNarrative(cachedNarrative);
-    narrativeFetchedRef.current = Boolean(cachedNarrative.trim());
-
-    const { data: competitorRow } = await supabase
-      .from('pipeline_runs')
-      .select('competitor_analysis')
-      .eq('engagement_id', engagementIdFromUrl)
-      .maybeSingle();
-    const cachedCompetitor = parseJsonColumn(competitorRow?.competitor_analysis);
-    setCompetitorData(cachedCompetitor ? (cachedCompetitor as CompetitorAnalysisData) : null);
-
-    const { data: reinvestmentRow } = await supabase
-      .from('pipeline_runs')
-      .select('reinvestment_opportunities')
-      .eq('engagement_id', engagementIdFromUrl)
-      .maybeSingle();
-    const cachedReinvestment = parseJsonColumn(reinvestmentRow?.reinvestment_opportunities);
-    setReinvestmentData(cachedReinvestment ? (cachedReinvestment as ReinvestmentData) : null);
-
-    setPipelineLoading(false);
-  }, [engagementIdFromUrl, refreshKey]);
+  }, [activeEngagementId, refreshKey]);
 
   useEffect(() => {
     void loadPipeline();
   }, [loadPipeline]);
 
   useEffect(() => {
-    if (!engagementIdFromUrl || refreshKey === 0) return;
+    if (!activeEngagementId || refreshKey === 0) return;
     forceRecomputeRef.current = true;
     setCachedF5Payload(null);
     setAssumptionsUsed({});
@@ -427,21 +454,21 @@ export function F5_1_EconomicsDashboard({
     narrativeFetchedRef.current = false;
     setSensitivityNarrative('');
     void (async () => {
-      await loadEngagement(engagementIdFromUrl);
+      await loadEngagement(activeEngagementId);
       await loadPipeline();
     })();
-  }, [engagementIdFromUrl, refreshKey, loadEngagement, loadPipeline]);
+  }, [activeEngagementId, refreshKey, loadEngagement, loadPipeline]);
 
   useEffect(() => {
-    if (!engagementIdFromUrl) return;
+    if (!activeEngagementId) return;
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
-        void loadEngagement(engagementIdFromUrl);
+        void loadEngagement(activeEngagementId);
       }
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [engagementIdFromUrl, loadEngagement]);
+  }, [activeEngagementId, loadEngagement]);
 
   const selectedVariant = useMemo(() => selectedVariantFromF4Pods(f4Pods), [f4Pods]);
   const selectedVariantName = typeof f4Pods?.selected_variant_name === 'string' ? f4Pods.selected_variant_name : '';
@@ -517,7 +544,7 @@ export function F5_1_EconomicsDashboard({
   );
 
   useEffect(() => {
-    if (!economicsResult || !engagementIdFromUrl || pipelineLoading || engagementLoading) return;
+    if (!economicsResult || !activeEngagementId || pipelineLoading || engagementLoading) return;
     let cancelled = false;
 
     const forceRecompute = forceRecomputeRef.current;
@@ -538,7 +565,7 @@ export function F5_1_EconomicsDashboard({
 
     (async () => {
       setSaveError(null);
-      const result = await persistPipelineColumn(engagementIdFromUrl, 'f5_economics', payload);
+      const result = await persistPipelineColumn(activeEngagementId, 'f5_economics', payload);
       if (cancelled) return;
       if (!result.ok) {
         setSaveError(result.error ?? 'Failed to save economics');
@@ -557,7 +584,7 @@ export function F5_1_EconomicsDashboard({
   }, [
     freshDeterministicSignature,
     economicsResult,
-    engagementIdFromUrl,
+    activeEngagementId,
     pipelineLoading,
     engagementLoading,
     preferences,
@@ -569,7 +596,7 @@ export function F5_1_EconomicsDashboard({
   ]);
 
   useEffect(() => {
-    if (!economicsResult || !engagementIdFromUrl || pipelineLoading) return;
+    if (!economicsResult || !activeEngagementId || pipelineLoading) return;
     if (narrativeFetchedRef.current) return;
 
     const sensitivityData = economicsResult.sensitivity;
@@ -583,7 +610,7 @@ export function F5_1_EconomicsDashboard({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            engagementId: engagementIdFromUrl,
+            engagementId: activeEngagementId,
             sensitivityData,
           }),
         });
@@ -604,7 +631,7 @@ export function F5_1_EconomicsDashboard({
           text,
           intakeSignature,
         );
-        const saveResult = await persistPipelineColumn(engagementIdFromUrl, 'f5_economics', payload);
+        const saveResult = await persistPipelineColumn(activeEngagementId, 'f5_economics', payload);
         if (!cancelled && saveResult.ok) {
           setCachedF5Payload(payload);
           if (saveResult.pipelineId) setPipelineId(saveResult.pipelineId);
@@ -625,7 +652,7 @@ export function F5_1_EconomicsDashboard({
     };
   }, [
     economicsResult,
-    engagementIdFromUrl,
+    activeEngagementId,
     pipelineLoading,
     preferences,
     intakeSignature,
@@ -693,6 +720,11 @@ export function F5_1_EconomicsDashboard({
       <div className="p-10 max-w-[1204px] mx-auto">
         <div className="text-[13px] text-[#161916] mb-6">ECONOMICS</div>
         <div className="text-[14px] text-[#494949]">Loading economics…</div>
+        {!activeEngagementId ? (
+          <p className="mt-3 text-[13px] text-[#FD4E59]">
+            No engagement selected. Choose a client from the header or complete intake first.
+          </p>
+        ) : null}
       </div>
     );
   }
