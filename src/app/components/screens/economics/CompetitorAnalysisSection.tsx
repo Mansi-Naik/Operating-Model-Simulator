@@ -316,7 +316,8 @@ export function CompetitorAnalysisSection({
       </header>
 
       <p className="text-[13px] text-[#6D7069] mb-5">
-        Scores synthesized from public information by AI. Verify before client use.
+        Scores benchmarked from 2025 analyst reports (Gartner, ISG, HFS, IDC) and public sources.
+        Strategic narrative AI-generated per engagement. Verify before client use.
         {data?.generated_at ? ` Generated ${timeAgo(data.generated_at)}.` : ''}
         {data?.domain_used ? ` Domain set: ${data.domain_used}.` : ''}
       </p>

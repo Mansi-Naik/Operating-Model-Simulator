@@ -1,12 +1,11 @@
 import callGemini, { geminiLogExtras } from './geminiClient.js'
 import { jsonrepair } from 'jsonrepair'
 import { createSupabaseAdmin } from '../../src/lib/supabaseAdmin.js'
-import { buildCompetitorAnalysisPrompt } from '../../src/lib/competitorPrompt.js'
+import { buildCompetitorNarrativePrompt } from '../../src/lib/competitorNarrativePrompt.js'
 import {
-  getCompetitorsForDomain,
-  GENPACT_PROFILE,
+  getCuratedCompetitorsForDomain,
   COMPETITOR_DIMENSIONS,
-  primaryLogoUrl,
+  resolveDomainKey,
 } from '../../src/lib/competitorLibrary.js'
 
 const FEATURE = 'competitor_analysis'
@@ -52,19 +51,17 @@ function extractJsonText(raw) {
 
 /**
  * @param {string} responseText
- * @returns {{ value: Record<string, unknown>, repaired: boolean }}
+ * @returns {Record<string, unknown>}
  */
-function parseCompetitorJson(responseText) {
+function parseNarrativeJson(responseText) {
   const jsonText = extractJsonText(responseText)
-  if (!jsonText) {
-    throw new Error('Empty model response')
-  }
+  if (!jsonText) throw new Error('Empty model response')
   try {
     const value = JSON.parse(jsonText)
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw new Error('Parsed JSON is not an object')
     }
-    return { value: /** @type {Record<string, unknown>} */ (value), repaired: false }
+    return /** @type {Record<string, unknown>} */ (value)
   } catch (firstErr) {
     try {
       const repaired = jsonrepair(jsonText)
@@ -73,10 +70,10 @@ function parseCompetitorJson(responseText) {
         throw new Error('Repaired JSON is not an object')
       }
       console.warn(
-        '[competitor-analysis] jsonrepair recovered model output:',
+        '[competitor-analysis] jsonrepair recovered narrative output:',
         firstErr instanceof Error ? firstErr.message : firstErr,
       )
-      return { value: /** @type {Record<string, unknown>} */ (value), repaired: true }
+      return /** @type {Record<string, unknown>} */ (value)
     } catch {
       throw firstErr
     }
@@ -94,34 +91,17 @@ function clampScore(value) {
 }
 
 /**
- * @param {string} scoredName
- * @param {Array<{ name: string }>} profiles
- * @returns {{ name: string, logo?: string, short?: string } | undefined}
- */
-function matchProfile(scoredName, profiles) {
-  const name = String(scoredName ?? '').trim()
-  if (!name) return undefined
-  const exact = profiles.find((p) => p.name === name)
-  if (exact) return exact
-  const lower = name.toLowerCase()
-  return profiles.find((p) => {
-    const pl = p.name.toLowerCase()
-    return pl === lower || lower.includes(pl) || pl.includes(lower)
-  })
-}
-
-/**
- * @param {Record<string, unknown>} row
- * @param {{ name: string, logo?: string, short?: string }} profile
+ * @param {Record<string, unknown>} provider
  * @returns {Record<string, unknown>}
  */
-function normalizeCompetitorRow(row, profile) {
-  const scores = row.scores && typeof row.scores === 'object' && !Array.isArray(row.scores)
-    ? /** @type {Record<string, unknown>} */ (row.scores)
-    : {}
+function formatCuratedCompetitor(provider) {
+  const scores =
+    provider.scores && typeof provider.scores === 'object' && !Array.isArray(provider.scores)
+      ? /** @type {Record<string, unknown>} */ (provider.scores)
+      : {}
   const rationales =
-    row.rationales && typeof row.rationales === 'object' && !Array.isArray(row.rationales)
-      ? /** @type {Record<string, unknown>} */ (row.rationales)
+    provider.rationales && typeof provider.rationales === 'object' && !Array.isArray(provider.rationales)
+      ? /** @type {Record<string, unknown>} */ (provider.rationales)
       : {}
 
   /** @type {Record<string, number>} */
@@ -130,50 +110,29 @@ function normalizeCompetitorRow(row, profile) {
   const normalizedRationales = {}
   for (const id of DIMENSION_IDS) {
     normalizedScores[id] = clampScore(scores[id])
-    const rationale = String(rationales[id] ?? '').trim()
-    normalizedRationales[id] =
-      rationale || 'Illustrative score based on publicly known market positioning.'
+    normalizedRationales[id] = String(rationales[id] ?? '').trim() || 'Curated benchmark score.'
   }
 
-  const domain = profile.domain ?? null
   return {
-    name: profile.name,
-    domain,
+    name: String(provider.name ?? ''),
+    domain: typeof provider.domain === 'string' ? provider.domain : null,
+    logo: typeof provider.logo === 'string' ? provider.logo : null,
+    short:
+      typeof provider.short === 'string'
+        ? provider.short
+        : String(provider.name ?? '')
+            .slice(0, 3)
+            .toUpperCase(),
+    is_genpact: Boolean(provider.is_genpact),
     scores: normalizedScores,
     rationales: normalizedRationales,
-    strengths: Array.isArray(row.strengths)
-      ? row.strengths.map((s) => String(s).trim()).filter(Boolean).slice(0, 3)
+    strengths: Array.isArray(provider.strengths)
+      ? provider.strengths.map((s) => String(s).trim()).filter(Boolean).slice(0, 3)
       : [],
-    weaknesses: Array.isArray(row.weaknesses)
-      ? row.weaknesses.map((s) => String(s).trim()).filter(Boolean).slice(0, 2)
+    weaknesses: Array.isArray(provider.weaknesses)
+      ? provider.weaknesses.map((s) => String(s).trim()).filter(Boolean).slice(0, 2)
       : [],
-    logo: domain ? primaryLogoUrl(domain) : profile.logo ?? null,
-    short: profile.short ?? profile.name.slice(0, 3).toUpperCase(),
-    is_genpact: profile.name === 'Genpact',
   }
-}
-
-/**
- * @param {Record<string, unknown>} parsed
- * @param {Array<{ name: string, logo?: string, short?: string }>} allProfiles
- * @returns {Array<Record<string, unknown>>}
- */
-function buildEnrichedCompetitors(parsed, allProfiles) {
-  const scoredList = Array.isArray(parsed.competitors) ? parsed.competitors : []
-  /** @type {Map<string, Record<string, unknown>>} */
-  const byProfileName = new Map()
-
-  for (const row of scoredList) {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) continue
-    const profile = matchProfile(/** @type {Record<string, unknown>} */ (row).name, allProfiles)
-    if (!profile) continue
-    byProfileName.set(profile.name, normalizeCompetitorRow(/** @type {Record<string, unknown>} */ (row), profile))
-  }
-
-  return allProfiles.map((profile) => {
-    if (byProfileName.has(profile.name)) return byProfileName.get(profile.name)
-    return normalizeCompetitorRow({}, profile)
-  })
 }
 
 /**
@@ -187,24 +146,9 @@ async function insertLlmCallLog(supabase, row) {
 
 /**
  * @param {Record<string, unknown>} parsed
- * @returns {string | null}
- */
-function validateCompetitorPayload(parsed) {
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return 'payload must be an object'
-  }
-  const competitors = parsed.competitors
-  if (competitors != null && !Array.isArray(competitors)) {
-    return 'competitors must be an array when present'
-  }
-  return null
-}
-
-/**
- * @param {Record<string, unknown>} parsed
  * @returns {Record<string, unknown>}
  */
-function normalizeCompetitorPayload(parsed) {
+function normalizeNarrativePayload(parsed) {
   const summary =
     typeof parsed.summary === 'string' && parsed.summary.trim()
       ? parsed.summary.trim()
@@ -293,28 +237,28 @@ export async function handleCompetitorAnalysis(req, res) {
       typeof engagement.domain === 'string' && engagement.domain.trim()
         ? engagement.domain.trim()
         : null
-    const competitors = getCompetitorsForDomain(domain)
-    const allProfiles = [GENPACT_PROFILE, ...competitors]
+    const libraryKey = resolveDomainKey(domain)
+    const curatedProviders = getCuratedCompetitorsForDomain(domain)
+    const competitors = curatedProviders.map((p) =>
+      formatCuratedCompetitor(/** @type {Record<string, unknown>} */ (p)),
+    )
 
-    promptText = buildCompetitorAnalysisPrompt(
+    promptText = buildCompetitorNarrativePrompt(
       /** @type {Record<string, unknown>} */ (engagement),
-      competitors,
+      curatedProviders,
     )
 
     geminiMeta = await callGemini(promptText, {
       feature: FEATURE,
-      temperature: 0.2,
+      temperature: 0.3,
       response_mime_type: 'application/json',
-      max_output_tokens: 8192,
+      max_output_tokens: 1024,
     })
     responseText = geminiMeta.response_text
 
-    let parsed
-    let jsonRepaired = false
+    let narrative
     try {
-      const parseResult = parseCompetitorJson(responseText)
-      parsed = normalizeCompetitorPayload(parseResult.value)
-      jsonRepaired = parseResult.repaired
+      narrative = normalizeNarrativePayload(parseNarrativeJson(responseText))
     } catch (parseErr) {
       const message = parseErr instanceof Error ? parseErr.message : 'Failed to parse Gemini response'
       await insertLlmCallLog(supabase, {
@@ -333,33 +277,19 @@ export async function handleCompetitorAnalysis(req, res) {
       return
     }
 
-    const validationError = validateCompetitorPayload(parsed)
-    if (validationError) {
-      await insertLlmCallLog(supabase, {
-        engagement_id: engagementId,
-        feature: FEATURE,
-        prompt_text: promptText,
-        response_text: responseText,
-        status: 'error',
-        ...geminiLogExtras(geminiMeta, { errorMessage: validationError, durationFallbackMs: durationMs() }),
-      })
-      res.status(500).json({ error: 'Invalid competitor payload from model', details: validationError })
-      return
-    }
-
-    const enrichedCompetitors = buildEnrichedCompetitors(parsed, allProfiles)
-
     const finalData = {
-      competitors: enrichedCompetitors,
+      competitors,
       dimensions: COMPETITOR_DIMENSIONS,
-      summary: parsed.summary,
-      key_differentiators: parsed.key_differentiators,
-      key_risks: parsed.key_risks,
-      json_repaired: jsonRepaired,
+      summary: narrative.summary,
+      key_differentiators: narrative.key_differentiators,
+      key_risks: narrative.key_risks,
       generated_at: new Date().toISOString(),
       model_used: geminiMeta.model_used,
-      domain_used: domain || 'default',
+      domain_used: libraryKey,
       north_star_dimension: 'ai_automation',
+      scores_source: 'curated_benchmarks',
+      data_source:
+        'Curated from 2025 analyst reports (Gartner MQ F&A BPO, ISG Provider Lens, HFS, IDC MarketScape) and public company filings',
     }
 
     const { data: existing } = await supabase
