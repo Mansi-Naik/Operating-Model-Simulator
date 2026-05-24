@@ -1,4 +1,4 @@
-import { Settings, ArrowRight, TrendingUp, Check, Sparkles, AlertTriangle } from 'lucide-react';
+import { Settings, ArrowRight, TrendingUp, Check, Sparkles, Info, AlertTriangle } from 'lucide-react';
 import {
   CompetitorAnalysisSection,
   type CompetitorAnalysisData,
@@ -337,7 +337,7 @@ export function F5_1_EconomicsDashboard({
     setPipelineError(null);
     const { data, error } = await supabase
       .from('pipeline_runs')
-      .select('id, f3_roles, f4_pods, f5_economics, competitor_analysis')
+      .select('id, f3_roles, f4_pods, f5_economics')
       .eq('engagement_id', engagementIdFromUrl)
       .maybeSingle();
 
@@ -346,6 +346,7 @@ export function F5_1_EconomicsDashboard({
       setPipelineId(null);
       setF3Roles([]);
       setF4Pods(null);
+      setCompetitorData(null);
       setPipelineLoading(false);
       return;
     }
@@ -362,8 +363,15 @@ export function F5_1_EconomicsDashboard({
       typeof savedEconomics.sensitivity_narrative === 'string' ? savedEconomics.sensitivity_narrative : '';
     setSensitivityNarrative(cachedNarrative);
     narrativeFetchedRef.current = Boolean(cachedNarrative.trim());
-    const cachedCompetitor = parseJsonColumn(data?.competitor_analysis);
+
+    const { data: competitorRow } = await supabase
+      .from('pipeline_runs')
+      .select('competitor_analysis')
+      .eq('engagement_id', engagementIdFromUrl)
+      .maybeSingle();
+    const cachedCompetitor = parseJsonColumn(competitorRow?.competitor_analysis);
     setCompetitorData(cachedCompetitor ? (cachedCompetitor as CompetitorAnalysisData) : null);
+
     setPipelineLoading(false);
   }, [engagementIdFromUrl, refreshKey]);
 
@@ -448,13 +456,18 @@ export function F5_1_EconomicsDashboard({
 
   const economicsResult = useMemo(() => {
     if (!engagement || !selectedVariant || engagementLoading || pipelineLoading) return null;
-    return runFullEconomics(
-      engagement as Record<string, unknown>,
-      Array.isArray(tasks) ? (tasks as Record<string, unknown>[]) : [],
-      selectedVariant,
-      f3Roles,
-      preferences,
-    ) as Record<string, unknown>;
+    try {
+      return runFullEconomics(
+        engagement as Record<string, unknown>,
+        Array.isArray(tasks) ? (tasks as Record<string, unknown>[]) : [],
+        selectedVariant,
+        f3Roles,
+        preferences,
+      ) as Record<string, unknown>;
+    } catch (err) {
+      console.error('[F5] runFullEconomics failed:', err);
+      return null;
+    }
   }, [engagement, tasks, selectedVariant, f3Roles, preferences, engagementLoading, pipelineLoading]);
 
   const displayEconomics = economicsResult;
@@ -583,6 +596,10 @@ export function F5_1_EconomicsDashboard({
 
   const loading = engagementLoading || pipelineLoading;
   const error = engagementError ?? pipelineError;
+  const economicsComputeError =
+    !loading && engagement && selectedVariant && !economicsResult && !pipelineError && !engagementError
+      ? 'Economics could not be computed from the current F4 variant and intake data.'
+      : null;
 
   const currentState = asObj(displayEconomics?.current_state);
   const futureState = asObj(displayEconomics?.future_state);
@@ -641,6 +658,18 @@ export function F5_1_EconomicsDashboard({
       <div className="p-10 max-w-[1204px] mx-auto">
         <div className="text-[13px] text-[#161916] mb-6">ECONOMICS</div>
         <div className="mb-6 text-[14px] text-[#FD4E59] border border-[#FD4E59]/30 rounded-lg p-4 bg-[#FCE4D6]/30">{error}</div>
+        <PipelineReRunButton feature="f5" onConfirmRerun={() => onReRun?.()} />
+      </div>
+    );
+  }
+
+  if (economicsComputeError) {
+    return (
+      <div className="p-10 max-w-[1204px] mx-auto">
+        <div className="text-[13px] text-[#161916] mb-6">ECONOMICS</div>
+        <div className="mb-6 text-[14px] text-[#FD4E59] border border-[#FD4E59]/30 rounded-lg p-4 bg-[#FCE4D6]/30">
+          {economicsComputeError}
+        </div>
         <PipelineReRunButton feature="f5" onConfirmRerun={() => onReRun?.()} />
       </div>
     );
