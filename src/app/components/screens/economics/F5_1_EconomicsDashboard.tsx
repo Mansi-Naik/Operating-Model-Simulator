@@ -300,8 +300,8 @@ export function F5_1_EconomicsDashboard({
       if (!response.ok) {
         let errMsg = responseText;
         try {
-          const errBody = JSON.parse(responseText) as { error?: string };
-          errMsg = errBody.error || responseText;
+          const errBody = JSON.parse(responseText) as { error?: string; details?: string };
+          errMsg = [errBody.error, errBody.details].filter(Boolean).join(': ') || responseText;
         } catch {
           /* use raw text */
         }

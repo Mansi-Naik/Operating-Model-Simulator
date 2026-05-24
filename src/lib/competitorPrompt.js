@@ -105,8 +105,10 @@ Include one object in "competitors" for Genpact and one for each named competito
 - Scores should reflect publicly known positioning, not hopes.
 - The AI/Automation dimension is the most important — calibrate carefully.
 - Industry Expertise should reflect each provider's documented strength in ${domain}.
-- Each rationale should be 1-2 sentences referencing specific known offerings/capabilities where possible.
+- Keep each rationale to ONE short sentence (max 25 words) to fit JSON output limits.
 - Don't invent specific client names or contract values. Speak in general terms.
+- strengths: max 2 bullets; weaknesses: max 1 bullet per competitor.
+- Output valid JSON only — no trailing commas, no comments.
 
 CRITICAL: This output is illustrative for internal strategy use. Acknowledge uncertainty in rationales where appropriate. Don't fabricate specific case studies or numbers.
 

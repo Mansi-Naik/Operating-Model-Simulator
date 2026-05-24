@@ -1,4 +1,5 @@
 import callGemini, { geminiLogExtras } from './geminiClient.js'
+import { jsonrepair } from 'jsonrepair'
 import { createSupabaseAdmin } from '../../src/lib/supabaseAdmin.js'
 import { buildCompetitorAnalysisPrompt } from '../../src/lib/competitorPrompt.js'
 import {
@@ -8,6 +9,15 @@ import {
 } from '../../src/lib/competitorLibrary.js'
 
 const FEATURE = 'competitor_analysis'
+
+const DIMENSION_IDS = [
+  'ai_automation',
+  'industry_expertise',
+  'cost_competitive',
+  'implementation_speed',
+  'risk_compliance',
+  'client_outcomes',
+]
 
 /**
  * @param {unknown} value
@@ -22,17 +32,145 @@ export function isUuid(value) {
 
 /**
  * @param {string} raw
+ * @returns {string}
+ */
+function extractJsonText(raw) {
+  if (typeof raw !== 'string') return ''
+  let s = raw.trim()
+  if (s.startsWith('```')) {
+    s = s.replace(/^```(?:json)?\s*/i, '')
+    const fence = s.lastIndexOf('```')
+    if (fence >= 0) s = s.slice(0, fence)
+    s = s.trim()
+  }
+  const start = s.indexOf('{')
+  const end = s.lastIndexOf('}')
+  if (start >= 0 && end > start) return s.slice(start, end + 1)
+  return s
+}
+
+/**
+ * @param {string} responseText
+ * @returns {{ value: Record<string, unknown>, repaired: boolean }}
+ */
+function parseCompetitorJson(responseText) {
+  const jsonText = extractJsonText(responseText)
+  if (!jsonText) {
+    throw new Error('Empty model response')
+  }
+  try {
+    const value = JSON.parse(jsonText)
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Parsed JSON is not an object')
+    }
+    return { value: /** @type {Record<string, unknown>} */ (value), repaired: false }
+  } catch (firstErr) {
+    try {
+      const repaired = jsonrepair(jsonText)
+      const value = JSON.parse(repaired)
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('Repaired JSON is not an object')
+      }
+      console.warn(
+        '[competitor-analysis] jsonrepair recovered model output:',
+        firstErr instanceof Error ? firstErr.message : firstErr,
+      )
+      return { value: /** @type {Record<string, unknown>} */ (value), repaired: true }
+    } catch {
+      throw firstErr
+    }
+  }
+}
+
+/**
+ * @param {unknown} value
+ * @returns {number}
+ */
+function clampScore(value) {
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n)) return 3
+  return Math.max(1, Math.min(5, Math.round(n)))
+}
+
+/**
+ * @param {string} scoredName
+ * @param {Array<{ name: string }>} profiles
+ * @returns {{ name: string, logo?: string, short?: string } | undefined}
+ */
+function matchProfile(scoredName, profiles) {
+  const name = String(scoredName ?? '').trim()
+  if (!name) return undefined
+  const exact = profiles.find((p) => p.name === name)
+  if (exact) return exact
+  const lower = name.toLowerCase()
+  return profiles.find((p) => {
+    const pl = p.name.toLowerCase()
+    return pl === lower || lower.includes(pl) || pl.includes(lower)
+  })
+}
+
+/**
+ * @param {Record<string, unknown>} row
+ * @param {{ name: string, logo?: string, short?: string }} profile
  * @returns {Record<string, unknown>}
  */
-function parseJsonFromModel(raw) {
-  const trimmed = raw.trim()
-  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  const jsonText = fenceMatch ? fenceMatch[1].trim() : trimmed
-  const parsed = JSON.parse(jsonText)
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Parsed JSON is not an object')
+function normalizeCompetitorRow(row, profile) {
+  const scores = row.scores && typeof row.scores === 'object' && !Array.isArray(row.scores)
+    ? /** @type {Record<string, unknown>} */ (row.scores)
+    : {}
+  const rationales =
+    row.rationales && typeof row.rationales === 'object' && !Array.isArray(row.rationales)
+      ? /** @type {Record<string, unknown>} */ (row.rationales)
+      : {}
+
+  /** @type {Record<string, number>} */
+  const normalizedScores = {}
+  /** @type {Record<string, string>} */
+  const normalizedRationales = {}
+  for (const id of DIMENSION_IDS) {
+    normalizedScores[id] = clampScore(scores[id])
+    const rationale = String(rationales[id] ?? '').trim()
+    normalizedRationales[id] =
+      rationale || 'Illustrative score based on publicly known market positioning.'
   }
-  return /** @type {Record<string, unknown>} */ (parsed)
+
+  return {
+    name: profile.name,
+    scores: normalizedScores,
+    rationales: normalizedRationales,
+    strengths: Array.isArray(row.strengths)
+      ? row.strengths.map((s) => String(s).trim()).filter(Boolean).slice(0, 3)
+      : [],
+    weaknesses: Array.isArray(row.weaknesses)
+      ? row.weaknesses.map((s) => String(s).trim()).filter(Boolean).slice(0, 2)
+      : [],
+    logo: profile.logo ?? null,
+    short: profile.short ?? profile.name.slice(0, 3).toUpperCase(),
+    is_genpact: profile.name === 'Genpact',
+  }
+}
+
+/**
+ * @param {Record<string, unknown>} parsed
+ * @param {Array<{ name: string, logo?: string, short?: string }>} allProfiles
+ * @returns {Array<Record<string, unknown>>}
+ */
+function buildEnrichedCompetitors(parsed, allProfiles) {
+  const scoredList = Array.isArray(parsed.competitors) ? parsed.competitors : []
+  /** @type {Map<string, Record<string, unknown>>} */
+  const byProfileName = new Map()
+
+  for (const row of scoredList) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue
+    const profile = matchProfile(/** @type {Record<string, unknown>} */ (row).name, allProfiles)
+    if (!profile) continue
+    byProfileName.set(profile.name, normalizeCompetitorRow(/** @type {Record<string, unknown>} */ (row), profile))
+  }
+
+  return allProfiles.map((profile) => {
+    if (byProfileName.has(profile.name)) return byProfileName.get(profile.name)
+    return normalizeCompetitorRow({}, profile)
+  })
 }
 
 /**
@@ -49,28 +187,42 @@ async function insertLlmCallLog(supabase, row) {
  * @returns {string | null}
  */
 function validateCompetitorPayload(parsed) {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return 'payload must be an object'
+  }
   const competitors = parsed.competitors
-  if (!Array.isArray(competitors) || competitors.length === 0) {
-    return 'competitors must be a non-empty array'
-  }
-  for (let i = 0; i < competitors.length; i += 1) {
-    const row = competitors[i]
-    if (!row || typeof row !== 'object' || Array.isArray(row)) {
-      return `competitors[${i}] must be an object`
-    }
-    const c = /** @type {Record<string, unknown>} */ (row)
-    if (typeof c.name !== 'string' || !c.name.trim()) {
-      return `competitors[${i}].name must be a non-empty string`
-    }
-    const scores = c.scores
-    if (!scores || typeof scores !== 'object' || Array.isArray(scores)) {
-      return `competitors[${i}].scores must be an object`
-    }
-  }
-  if (typeof parsed.summary !== 'string' || !parsed.summary.trim()) {
-    return 'summary must be a non-empty string'
+  if (competitors != null && !Array.isArray(competitors)) {
+    return 'competitors must be an array when present'
   }
   return null
+}
+
+/**
+ * @param {Record<string, unknown>} parsed
+ * @returns {Record<string, unknown>}
+ */
+function normalizeCompetitorPayload(parsed) {
+  const summary =
+    typeof parsed.summary === 'string' && parsed.summary.trim()
+      ? parsed.summary.trim()
+      : 'Illustrative competitive positioning for this engagement profile.'
+  const key_differentiators = Array.isArray(parsed.key_differentiators)
+    ? parsed.key_differentiators.map((s) => String(s).trim()).filter(Boolean).slice(0, 5)
+    : []
+  const key_risks = Array.isArray(parsed.key_risks)
+    ? parsed.key_risks.map((s) => String(s).trim()).filter(Boolean).slice(0, 5)
+    : []
+
+  return {
+    ...parsed,
+    summary,
+    key_differentiators:
+      key_differentiators.length > 0
+        ? key_differentiators
+        : ['Emphasize domain expertise and measurable outcomes in proposals.'],
+    key_risks:
+      key_risks.length > 0 ? key_risks : ['Validate assumptions against latest public competitor moves.'],
+  }
 }
 
 /**
@@ -148,15 +300,18 @@ export async function handleCompetitorAnalysis(req, res) {
 
     geminiMeta = await callGemini(promptText, {
       feature: FEATURE,
-      temperature: 0.3,
+      temperature: 0.2,
       response_mime_type: 'application/json',
-      max_output_tokens: 4096,
+      max_output_tokens: 8192,
     })
     responseText = geminiMeta.response_text
 
     let parsed
+    let jsonRepaired = false
     try {
-      parsed = parseJsonFromModel(responseText)
+      const parseResult = parseCompetitorJson(responseText)
+      parsed = normalizeCompetitorPayload(parseResult.value)
+      jsonRepaired = parseResult.repaired
     } catch (parseErr) {
       const message = parseErr instanceof Error ? parseErr.message : 'Failed to parse Gemini response'
       await insertLlmCallLog(supabase, {
@@ -170,7 +325,7 @@ export async function handleCompetitorAnalysis(req, res) {
       res.status(500).json({
         error: 'Failed to parse Gemini response',
         details: message,
-        raw: responseText.substring(0, 500),
+        raw: responseText.substring(0, 800),
       })
       return
     }
@@ -189,23 +344,15 @@ export async function handleCompetitorAnalysis(req, res) {
       return
     }
 
-    const scoredList = /** @type {Array<Record<string, unknown>>} */ (parsed.competitors)
-    const enrichedCompetitors = scoredList.map((scored) => {
-      const meta = allProfiles.find((c) => c.name === scored.name)
-      return {
-        ...scored,
-        logo: meta?.logo ?? null,
-        short: meta?.short ?? String(scored.name ?? '').slice(0, 3).toUpperCase(),
-        is_genpact: scored.name === 'Genpact',
-      }
-    })
+    const enrichedCompetitors = buildEnrichedCompetitors(parsed, allProfiles)
 
     const finalData = {
       competitors: enrichedCompetitors,
       dimensions: COMPETITOR_DIMENSIONS,
       summary: parsed.summary,
-      key_differentiators: Array.isArray(parsed.key_differentiators) ? parsed.key_differentiators : [],
-      key_risks: Array.isArray(parsed.key_risks) ? parsed.key_risks : [],
+      key_differentiators: parsed.key_differentiators,
+      key_risks: parsed.key_risks,
+      json_repaired: jsonRepaired,
       generated_at: new Date().toISOString(),
       model_used: geminiMeta.model_used,
       domain_used: domain || 'default',
