@@ -51,13 +51,56 @@ export function summarizeF2FromTasks(tasks) {
 }
 
 /**
+ * @param {Record<string, unknown>[] | null | undefined} tasks
+ * @returns {string}
+ */
+export function summarizeTasksForReinvestment(tasks) {
+  const list = Array.isArray(tasks) ? tasks : []
+  if (list.length === 0) return 'No in-scope tasks loaded.'
+  return list
+    .filter((row) => row && typeof row === 'object')
+    .slice(0, 14)
+    .map((row) => {
+      const name = String(row.task_name ?? 'Unnamed task').trim()
+      const alloc = allocationLabel(row) || 'not allocated'
+      return `- ${name} [${alloc}]`
+    })
+    .join('\n')
+}
+
+/**
+ * @param {Record<string, unknown> | null | undefined} pipelineData
+ * @returns {string}
+ */
+export function summarizeProjectStages(pipelineData) {
+  const f6 = pipelineData?.f6_timeline
+  if (!f6 || typeof f6 !== 'object' || Array.isArray(f6)) {
+    return 'Use rollout framing: Pilot (months 1-3) → Scale (4-9) → Steady state (10+).'
+  }
+  const phases = Array.isArray(f6.phases) ? f6.phases : []
+  if (phases.length === 0) {
+    return 'Use rollout framing: Pilot (months 1-3) → Scale (4-9) → Steady state (10+).'
+  }
+  return phases
+    .slice(0, 8)
+    .map((phase, idx) => {
+      const p = phase && typeof phase === 'object' ? phase : {}
+      const name = String(p.phase_name ?? p.name ?? `Phase ${idx + 1}`).trim()
+      const weeks = p.duration_weeks ?? p.weeks ?? p.duration ?? '?'
+      return `- ${name}: ${weeks} weeks`
+    })
+    .join('\n')
+}
+
+/**
  * @param {Record<string, unknown> | null | undefined} engagement
  * @param {Record<string, unknown>} economicsData
  * @param {Record<string, unknown> | null | undefined} pipelineData
  * @param {Record<string, unknown>} f2Summary
+ * @param {Record<string, unknown>[] | null | undefined} tasks
  * @returns {string}
  */
-export function buildReinvestmentPrompt(engagement, economicsData, pipelineData, f2Summary) {
+export function buildReinvestmentPrompt(engagement, economicsData, pipelineData, f2Summary, tasks) {
   const intake =
     engagement?.intake_data && typeof engagement.intake_data === 'object' && !Array.isArray(engagement.intake_data)
       ? /** @type {Record<string, unknown>} */ (engagement.intake_data)
@@ -121,10 +164,14 @@ export function buildReinvestmentPrompt(engagement, economicsData, pipelineData,
     pipelineData?.f4_pods && typeof pipelineData.f4_pods === 'object' ? pipelineData.f4_pods : null
   const selectedVariant =
     f4Pods && typeof f4Pods.selected_variant_name === 'string' ? f4Pods.selected_variant_name : 'not specified'
+  const taskLines = summarizeTasksForReinvestment(tasks)
+  const projectStages = summarizeProjectStages(
+    pipelineData ? /** @type {Record<string, unknown>} */ (pipelineData) : null,
+  )
 
   return `You are a Genpact strategy consultant identifying reinvestment opportunities for an active client engagement.
 
-The engagement has generated significant cost savings through automation. Your task: identify SPECIFIC, ACCOUNT-RELEVANT ways Genpact can reinvest these savings to GROW REVENUE from this SAME client.
+The engagement has generated cost savings through automation. Recommend where to reinvest savings to grow revenue from THIS client — be brief and surgical.
 
 ## Client engagement profile
 
@@ -145,20 +192,25 @@ The engagement has generated significant cost savings through automation. Your t
 
 ## Operation context
 
-- Tasks currently in scope: ${tasksHandled}
-- Tasks being automated: ${automatedCount}
-- Tasks AI-assisted: ${assistedCount}
-- Client's stated goals: ${clientGoals}
+- Tasks in scope: ${tasksHandled} (${automatedCount} automated, ${assistedCount} AI-assisted)
+- Client goals: ${clientGoals}
+
+## In-scope processes (reinvest at a named step below)
+
+${taskLines}
+
+## Project / rollout stages (tie each recommendation to one)
+
+${projectStages}
 
 ## What to recommend
 
-Identify 4-5 SPECIFIC reinvestment opportunities. Each must:
+Identify exactly 4 opportunities. Each must:
 
-1. Use savings to grow revenue or further reduce cost FROM THIS SAME CLIENT
-2. Be specific to the ${domain} / ${subFunction} context — not generic BPO advice
-3. Have a credible investment-to-return ratio
-4. Be implementable within 6-18 months
-5. NOT require winning a separate contract or major contract renegotiation
+1. Name the exact process step from the task list above (or adjacent step in same workflow)
+2. Name the project stage when to invest (e.g. "Pilot month 2", "Scale phase week 8-12", "Post go-live month 10")
+3. State revenue impact in one line — no fluff
+4. Be implementable in 6-18 months without a new RFP
 
 VALID reinvestment categories (use mix of these):
 
@@ -181,34 +233,37 @@ INVALID categories (don't suggest these):
 Return JSON with this exact structure:
 
 {
-  "headline": "1-sentence framing of the reinvestment opportunity for this client",
+  "headline": "Max 15 words — where savings should go for ${clientName}",
   "opportunities": [
     {
-      "title": "Short title (5-8 words)",
+      "title": "5-7 words",
       "category": "upsell",
-      "rationale": "2-3 sentences",
+      "process_step": "Exact workflow step (e.g. Exception queue triage, GL recon matching)",
+      "project_stage": "When to invest (e.g. Pilot week 6-8, Scale month 5)",
+      "summary": "Max 20 words — what to do and expected revenue lift",
       "investment_required": "$50-80k upfront",
-      "revenue_impact": "+$30-50k/month",
-      "cost_impact": "-$8k/month",
+      "revenue_impact": "+$30k/mo",
+      "cost_impact": "-$8k/mo or none",
       "timeline_months": 6,
       "risk_level": "low",
-      "first_step": "1-sentence concrete next action"
+      "first_step": "Max 12 words — one action"
     }
   ],
-  "prioritization_note": "1-2 sentences on which opportunity to pursue first and why",
-  "total_potential_annual_uplift": "$500k-800k annualized"
+  "prioritization_note": "Max 25 words — which to do first and at what stage",
+  "total_potential_annual_uplift": "$400-600k/yr"
 }
 
-Use category values: upsell, cross_sell, ai_deepening, value_stack, delivery_economics, retention
-Use risk_level values: low, medium, high
+Use category: upsell, cross_sell, ai_deepening, value_stack, delivery_economics, retention
+Use risk_level: low, medium, high
 
-## Guidance
+## Brevity rules (strict)
 
-- Be SPECIFIC to ${domain}/${subFunction}. Generic suggestions get filtered out.
-- Mix risk levels — at least one low-risk and one higher-risk option.
-- Total annual uplift should be plausible (typically 30-100% of annual savings).
-- Be HONEST about risks.
-- This output is for an internal Genpact strategy discussion, not client-facing. Be candid.
+- NO paragraphs. NO generic BPO language.
+- process_step and project_stage are mandatory — vague answers are invalid.
+- summary replaces long rationale; keep under 20 words.
+- Reference real task/process names from the task list.
+- Mix risk levels; include at least one low-risk option.
+- Internal Genpact audience — direct and specific.
 
 Return ONLY the JSON object. No markdown, no code fences, no preamble.`
 }

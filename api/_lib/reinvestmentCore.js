@@ -69,6 +69,18 @@ function parseReinvestmentJson(responseText) {
 
 /**
  * @param {unknown} value
+ * @param {number} maxLen
+ * @returns {string}
+ */
+function clipText(value, maxLen) {
+  const s = String(value ?? '').trim()
+  if (!s) return ''
+  if (s.length <= maxLen) return s
+  return `${s.slice(0, maxLen - 1)}…`
+}
+
+/**
+ * @param {unknown} value
  * @returns {number}
  */
 function toNum(value) {
@@ -90,33 +102,46 @@ function normalizeReinvestmentPayload(parsed) {
       const o = /** @type {Record<string, unknown>} */ (row)
       const category = String(o.category ?? 'upsell').trim().toLowerCase()
       const risk = String(o.risk_level ?? 'medium').trim().toLowerCase()
+      const legacyRationale = String(o.rationale ?? '').trim()
+      const summary =
+        clipText(o.summary, 160) ||
+        clipText(legacyRationale, 160) ||
+        'Reinvest at named process step to capture revenue uplift.'
       return {
-        title: String(o.title ?? 'Reinvestment opportunity').trim(),
+        title: clipText(o.title ?? 'Reinvestment opportunity', 80),
         category: VALID_CATEGORIES.has(category) ? category : 'upsell',
-        rationale: String(o.rationale ?? '').trim() || 'Opportunity tied to this engagement profile.',
-        investment_required: String(o.investment_required ?? 'TBD').trim(),
-        revenue_impact: String(o.revenue_impact ?? 'TBD').trim(),
-        cost_impact: String(o.cost_impact ?? 'none').trim(),
+        process_step: clipText(o.process_step, 100) || 'Core delivery workflow',
+        project_stage: clipText(o.project_stage, 80) || 'Scale phase (months 4-9)',
+        summary,
+        investment_required: clipText(o.investment_required ?? 'TBD', 40),
+        revenue_impact: clipText(o.revenue_impact ?? 'TBD', 40),
+        cost_impact: clipText(o.cost_impact ?? 'none', 40),
         timeline_months: Math.max(1, Math.min(24, Math.round(toNum(o.timeline_months)) || 6)),
         risk_level: VALID_RISKS.has(risk) ? risk : 'medium',
-        first_step: String(o.first_step ?? '').trim() || 'Schedule working session with client sponsor.',
+        first_step: clipText(o.first_step, 100) || 'Align with client sponsor on timing.',
       }
     })
 
   return {
-    headline:
+    headline: clipText(
       typeof parsed.headline === 'string' && parsed.headline.trim()
-        ? parsed.headline.trim()
-        : 'Reinvest delivery savings to deepen share of wallet with this client.',
+        ? parsed.headline
+        : 'Reinvest savings into high-yield workflow steps.',
+      120,
+    ),
     opportunities: normalized.length > 0 ? normalized : [],
-    prioritization_note:
+    prioritization_note: clipText(
       typeof parsed.prioritization_note === 'string' && parsed.prioritization_note.trim()
-        ? parsed.prioritization_note.trim()
-        : 'Start with the lowest-risk option that protects renewal, then pursue revenue upsides.',
-    total_potential_annual_uplift:
+        ? parsed.prioritization_note
+        : 'Start lowest-risk option in pilot; scale winners in months 4-9.',
+      200,
+    ),
+    total_potential_annual_uplift: clipText(
       typeof parsed.total_potential_annual_uplift === 'string' && parsed.total_potential_annual_uplift.trim()
-        ? parsed.total_potential_annual_uplift.trim()
-        : 'Plausible uplift if sequenced over 12-18 months',
+        ? parsed.total_potential_annual_uplift
+        : 'Plausible uplift over 12-18 months',
+      60,
+    ),
   }
 }
 
@@ -223,13 +248,14 @@ export async function handleReinvestmentOpportunities(req, res) {
       economicsData,
       pipelineData ? /** @type {Record<string, unknown>} */ (pipelineData) : {},
       f2Summary,
+      tasks,
     )
 
     geminiMeta = await callGemini(promptText, {
       feature: FEATURE,
-      temperature: 0.4,
+      temperature: 0.3,
       response_mime_type: 'application/json',
-      max_output_tokens: 8192,
+      max_output_tokens: 4096,
     })
     responseText = geminiMeta.response_text
 
