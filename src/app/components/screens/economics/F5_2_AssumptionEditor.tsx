@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useEngagement } from '../../../../hooks/useEngagement';
 import { normalizeF3Roles } from '../../../../lib/f3RolesStorage';
 import { runFullEconomics } from '../../../../lib/economicsEngine';
+import { formatMarginProfileForDisplay } from '../../../../lib/intakePhaseADisplay';
+import { mergePreferencesForF5Economics } from '../../../../lib/pipelineDeterministicRefresh';
 import { supabase } from '../../../../supabaseClient';
 
 interface F5_2_AssumptionEditorProps {
@@ -211,6 +213,11 @@ export function F5_2_AssumptionEditor({ onClose, onApplied, onSaved }: F5_2_Assu
     setAssumptions(assumptionsFromSaved(defaults, savedAssumptions));
   }, [engagementRecord, pipelineLoading, defaults, savedAssumptions, assumptions]);
 
+  const mergedPreferences = useMemo(
+    () => mergePreferencesForF5Economics(engagementRecord, assumptions ?? {}),
+    [engagementRecord, assumptions],
+  );
+
   const computed = useMemo(() => {
     if (!engagementRecord || !selectedVariant || !assumptions) return null;
     return runFullEconomics(
@@ -218,9 +225,9 @@ export function F5_2_AssumptionEditor({ onClose, onApplied, onSaved }: F5_2_Assu
       Array.isArray(tasks) ? (tasks as Record<string, unknown>[]) : [],
       selectedVariant,
       f3Roles,
-      assumptions,
+      mergedPreferences,
     ) as Record<string, unknown>;
-  }, [engagementRecord, tasks, selectedVariant, f3Roles, assumptions]);
+  }, [engagementRecord, tasks, selectedVariant, f3Roles, assumptions, mergedPreferences]);
 
   const updateAssumption = <K extends keyof AssumptionsState,>(key: K, value: AssumptionsState[K]) => {
     setAssumptions((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -377,15 +384,24 @@ export function F5_2_AssumptionEditor({ onClose, onApplied, onSaved }: F5_2_Assu
             <MoneyInputRow label="Retraining / FTE" value={assumptions.retraining_cost_per_fte} onChange={(v) => updateAssumption('retraining_cost_per_fte', v)} source={assumptions.retraining_cost_per_fte === defaults.retraining_cost_per_fte ? defaultChip : modified} />
             {(() => {
               const transition = asObj(computed?.transition_cost);
-              if (transition.margin_cap_applied !== true) return null;
-              const uncapped = Math.round(toNum(transition.uncapped_total));
-              const capped = Math.round(toNum(transition.total_transition_cost));
+              const profCode = String(transition.margin_profile ?? 'not_disclosed');
+              const profLabel = formatMarginProfileForDisplay(profCode) ?? profCode;
               const pct = toNum(transition.margin_cap_pct);
-              const prof = String(transition.margin_profile ?? 'not_disclosed');
+              const annualRev = Math.round(toNum(transition.annual_contract_revenue_usd));
+              const capMax = Math.round(toNum(transition.transition_cap_max_usd));
+              const total = Math.round(toNum(transition.total_transition_cost));
+              const uncapped = Math.round(toNum(transition.uncapped_total));
+              const capApplied = transition.margin_cap_applied === true;
+              if (!annualRev && !total) return null;
               return (
                 <div className="mt-2 rounded-md border border-[#161916]/10 bg-[#FFF8ED] px-3 py-2 text-[12px] text-[#494949] leading-snug">
-                  Transition cost capped at {pct}% of annual revenue per {prof} margin profile. Uncapped total would
-                  have been ${uncapped.toLocaleString('en-US')}, capped at ${capped.toLocaleString('en-US')}.
+                  <span className="font-semibold text-[#161916]">Margin profile ({profLabel}):</span> transition
+                  investment capped at {pct}% of annual contract revenue
+                  {annualRev > 0 ? ` ($${annualRev.toLocaleString('en-US')}/yr → max $${capMax.toLocaleString('en-US')})` : ''}
+                  . Modeled transition cost: ${total.toLocaleString('en-US')}
+                  {capApplied
+                    ? ` (uncapped build-up was $${uncapped.toLocaleString('en-US')}).`
+                    : ' (below cap — profile sets the ceiling only).'}
                 </div>
               );
             })()}

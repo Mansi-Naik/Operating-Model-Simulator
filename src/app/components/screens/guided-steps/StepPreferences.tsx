@@ -412,7 +412,9 @@ export function StepPreferences({ data, onNext, onBack, currentStep, totalSteps 
             {badge('preferences.margin_profile')}
           </label>
           <p className="text-[12px] text-[#6D7069] mb-2">
-            Used internally to calibrate transition investment. Not shown to client.
+            Used internally on F5 Economics: caps transition investment vs annual contract revenue, and calibrates
+            estimated fixed contract value when monthly fee is blank. Save this step, then check F5 Genpact revenue /
+            gross margin %, payback on the savings curve, and the margin note in Edit assumptions.
           </p>
           <select
             value={marginProfile}

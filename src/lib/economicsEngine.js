@@ -361,6 +361,66 @@ function revenueMarkupMultiplier(marginProfile) {
   return REVENUE_MARKUP_BY_MARGIN_PROFILE[/** @type {keyof typeof REVENUE_MARKUP_BY_MARGIN_PROFILE} */ (key)] ?? 1.3
 }
 
+/** Max transition spend as % of annual contract revenue, by F1 margin profile. */
+const TRANSITION_CAP_PCT_BY_MARGIN_PROFILE = Object.freeze({
+  low: 8,
+  medium: 15,
+  high: 25,
+  not_disclosed: 15,
+})
+
+/**
+ * @param {unknown} marginProfile
+ * @returns {number}
+ */
+export function marginTransitionCapPct(marginProfile) {
+  const key = typeof marginProfile === 'string' ? marginProfile.trim() : 'not_disclosed'
+  return TRANSITION_CAP_PCT_BY_MARGIN_PROFILE[/** @type {keyof typeof TRANSITION_CAP_PCT_BY_MARGIN_PROFILE} */ (key)] ?? 15
+}
+
+/**
+ * Estimates current monthly contract revenue from billing model (uses margin profile when revenue is implied).
+ *
+ * @param {Record<string, unknown> | null | undefined} currentState
+ * @param {Record<string, unknown> | null | undefined} billingModel
+ * @param {Record<string, unknown> | null | undefined} engagement
+ * @returns {number}
+ */
+export function estimateMonthlyContractRevenue(currentState, billingModel, engagement) {
+  const bm =
+    billingModel && typeof billingModel === 'object' && !Array.isArray(billingModel)
+      ? /** @type {Record<string, unknown>} */ (billingModel)
+      : null
+  const prefs = readPreferencesFromEngagement(engagement)
+  const markup = revenueMarkupMultiplier(prefs.margin_profile)
+  const monthlyHeadcount = nonNeg(currentState?.headcount_total)
+  const deliveryCost = nonNeg(currentState?.monthly_cost_usd)
+
+  if (!bm || bm.type === 'not_specified') {
+    return deliveryCost * markup
+  }
+
+  const type = typeof bm.type === 'string' ? bm.type : ''
+  if (type === 'fte_based') {
+    const statedRate = nonNeg(bm.monthly_per_fte)
+    if (statedRate > 0) return monthlyHeadcount * statedRate
+    const fallbackRate = monthlyHeadcount > 0 ? deliveryCost / monthlyHeadcount : 0
+    return monthlyHeadcount * fallbackRate * markup
+  }
+  if (type === 'hourly') {
+    const hoursPerFteMonth = 160
+    return monthlyHeadcount * hoursPerFteMonth * nonNeg(bm.hourly_rate)
+  }
+  if (type === 'transactional') {
+    const volume = nonNeg(currentState?.items_per_day) * WORKING_DAYS_PER_MONTH
+    return volume * nonNeg(bm.unit_cost)
+  }
+  if (type === 'fixed') {
+    return estimateFixedMonthlyValue(bm, currentState, engagement).value
+  }
+  return deliveryCost * markup
+}
+
 /**
  * Rounds to nearest $1k for readable contract suggestions.
  *
@@ -585,11 +645,13 @@ export function computeGenpactRevenueImpact(currentState, futureState, billingMo
  * @param {Record<string, unknown> | null | undefined} _engagement
  * @returns {Record<string, unknown>}
  */
-export function computeGenpactView(currentState, futureState, billingModel, _engagement) {
+export function computeGenpactView(currentState, futureState, billingModel, engagement) {
   const costToDeliverCurrent = nonNeg(currentState?.monthly_cost_usd)
   const costToDeliverFuture = nonNeg(futureState?.monthly_cost_usd)
   const headcountCurrent = nonNeg(currentState?.headcount_total)
   const headcountFuture = nonNeg(futureState?.headcount_total)
+  const prefs = readPreferencesFromEngagement(engagement)
+  const revenueMarkup = revenueMarkupMultiplier(prefs.margin_profile)
 
   const bm =
     billingModel && typeof billingModel === 'object' && !Array.isArray(billingModel)
@@ -604,9 +666,9 @@ export function computeGenpactView(currentState, futureState, billingModel, _eng
   let fixedEstimate = null
 
   if (!bm || billingType === 'not_specified') {
-    revenueCurrent = costToDeliverCurrent * 1.3
-    revenueFuture = costToDeliverFuture * 1.3
-    billingModelDisplay = 'Estimated (no billing model set)'
+    revenueCurrent = costToDeliverCurrent * revenueMarkup
+    revenueFuture = costToDeliverFuture * revenueMarkup
+    billingModelDisplay = `Estimated (no billing model · ${Math.round((revenueMarkup - 1) * 100)}% target margin)`
   } else if (billingType === 'transactional') {
     const monthlyVolume = nonNeg(currentState?.items_per_day) * WORKING_DAYS_PER_MONTH
     const unitCost = nonNeg(bm.unit_cost)
@@ -622,14 +684,21 @@ export function computeGenpactView(currentState, futureState, billingModel, _eng
     revenueFuture = totalHoursFuture * hourlyRate
     billingModelDisplay = `Hourly · $${hourlyRate}/hr`
   } else if (billingType === 'fte_based') {
+    const statedRate = nonNeg(bm.monthly_per_fte)
     const ratePerFte =
-      nonNeg(bm.monthly_per_fte) ||
-      (headcountCurrent > 0 ? (costToDeliverCurrent / headcountCurrent) * 1.3 : 0)
+      statedRate > 0
+        ? statedRate
+        : headcountCurrent > 0
+          ? (costToDeliverCurrent / headcountCurrent) * revenueMarkup
+          : 0
     revenueCurrent = headcountCurrent * ratePerFte
-    revenueFuture = headcountFuture * ratePerFte
-    billingModelDisplay = `FTE-based · $${ratePerFte}/FTE/mo`
+    revenueFuture = headcountFuture * (statedRate > 0 ? statedRate : ratePerFte)
+    billingModelDisplay =
+      statedRate > 0
+        ? `FTE-based · $${ratePerFte}/FTE/mo`
+        : `FTE-based · $${Math.round(ratePerFte)}/FTE/mo (est. from delivery cost + margin profile)`
   } else if (billingType === 'fixed') {
-    fixedEstimate = estimateFixedMonthlyValue(bm, currentState, _engagement)
+    fixedEstimate = estimateFixedMonthlyValue(bm, currentState, engagement)
     const fixedValue = fixedEstimate.value
     revenueCurrent = fixedValue
     revenueFuture = fixedValue
@@ -1206,16 +1275,17 @@ export function computeTransitionCost(engagement, futureState, options) {
   const marginRaw = prefsFromEngagement.margin_profile
   const marginProfile =
     typeof marginRaw === 'string' && marginRaw.trim() ? marginRaw.trim() : 'not_disclosed'
-  const marginCapPctMap = {
-    low: 8,
-    medium: 15,
-    high: 25,
-    not_disclosed: 15,
-    'Not disclosed': 15,
-  }
-  const marginCapPct = marginCapPctMap[/** @type {keyof typeof marginCapPctMap} */ (marginProfile)] ?? 15
-  const annualRevenue = nonNeg(futureState?.monthly_cost_usd) * 12
-  const transitionCostCap = annualRevenue > 0 ? (annualRevenue * marginCapPct) / 100 : Number.POSITIVE_INFINITY
+  const marginCapPct = marginTransitionCapPct(marginProfile)
+  const billingModelRaw = prefsFromEngagement.billing_model
+  const billingModel =
+    billingModelRaw && typeof billingModelRaw === 'object' && !Array.isArray(billingModelRaw)
+      ? /** @type {Record<string, unknown>} */ (billingModelRaw)
+      : null
+  const billingResolved = resolveBillingModelForEconomics(billingModel, currentState, engagement)
+  const monthlyContractRevenue = estimateMonthlyContractRevenue(currentState, billingResolved, engagement)
+  const annualContractRevenue = monthlyContractRevenue * 12
+  const transitionCostCap =
+    annualContractRevenue > 0 ? (annualContractRevenue * marginCapPct) / 100 : Number.POSITIVE_INFINITY
   const total_transition_cost = Math.min(uncapped_total, transitionCostCap)
   const margin_cap_applied = uncapped_total > total_transition_cost && Number.isFinite(transitionCostCap)
 
@@ -1229,6 +1299,9 @@ export function computeTransitionCost(engagement, futureState, options) {
     margin_cap_applied,
     margin_cap_pct: marginCapPct,
     margin_profile: marginProfile,
+    annual_contract_revenue_usd: annualContractRevenue,
+    monthly_contract_revenue_usd: monthlyContractRevenue,
+    transition_cap_max_usd: Number.isFinite(transitionCostCap) ? transitionCostCap : null,
   }
 }
 
