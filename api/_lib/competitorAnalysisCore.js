@@ -1,12 +1,11 @@
-import callGemini, { geminiLogExtras } from './_lib/geminiClient.js'
-import { applyCorsHeaders, resolveAllowedCorsOrigin } from '../src/lib/apiCors.js'
-import { createSupabaseAdmin } from '../src/lib/supabaseAdmin.js'
-import { buildCompetitorAnalysisPrompt } from '../src/lib/competitorPrompt.js'
+import callGemini, { geminiLogExtras } from './geminiClient.js'
+import { createSupabaseAdmin } from '../../src/lib/supabaseAdmin.js'
+import { buildCompetitorAnalysisPrompt } from '../../src/lib/competitorPrompt.js'
 import {
   getCompetitorsForDomain,
   GENPACT_PROFILE,
   COMPETITOR_DIMENSIONS,
-} from '../src/lib/competitorLibrary.js'
+} from '../../src/lib/competitorLibrary.js'
 
 const FEATURE = 'competitor_analysis'
 
@@ -14,7 +13,7 @@ const FEATURE = 'competitor_analysis'
  * @param {unknown} value
  * @returns {value is string}
  */
-function isUuid(value) {
+export function isUuid(value) {
   if (typeof value !== 'string') return false
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value.trim(),
@@ -42,7 +41,7 @@ function parseJsonFromModel(raw) {
  */
 async function insertLlmCallLog(supabase, row) {
   const { error } = await supabase.from('llm_call_logs').insert(row)
-  if (error) console.error('[generate-competitor-analysis] llm_call_logs:', error.message)
+  if (error) console.error('[competitor-analysis] llm_call_logs:', error.message)
 }
 
 /**
@@ -75,32 +74,24 @@ function validateCompetitorPayload(parsed) {
 }
 
 /**
- * POST `{ engagement_id }` → Gemini competitor scores → persist `pipeline_runs.competitor_analysis`.
+ * @param {Record<string, unknown>} body
+ * @returns {string | undefined}
+ */
+function engagementIdFromBody(body) {
+  if (typeof body.engagement_id === 'string') return body.engagement_id
+  if (typeof body.engagementId === 'string') return body.engagementId
+  return undefined
+}
+
+/**
+ * POST body `{ action: 'competitor_analysis', engagement_id }` → competitor scores JSON.
  *
  * @param {*} req
  * @param {*} res
  * @returns {Promise<void>}
  */
-export default async function handler(req, res) {
+export async function handleCompetitorAnalysis(req, res) {
   const startTime = Date.now()
-  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined
-  applyCorsHeaders(res, origin, { methods: 'POST, OPTIONS' })
-
-  if (req.method === 'OPTIONS') {
-    res.status(200).end()
-    return
-  }
-
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' })
-    return
-  }
-
-  if (origin && !resolveAllowedCorsOrigin(origin)) {
-    res.status(403).json({ error: 'Origin not allowed' })
-    return
-  }
-
   const durationMs = () => Date.now() - startTime
 
   /** @type {string | undefined} */
@@ -124,13 +115,7 @@ export default async function handler(req, res) {
       return
     }
 
-    engagementId =
-      typeof body.engagement_id === 'string'
-        ? body.engagement_id
-        : typeof body.engagementId === 'string'
-          ? body.engagementId
-          : undefined
-
+    engagementId = engagementIdFromBody(/** @type {Record<string, unknown>} */ (body))
     if (!isUuid(engagementId)) {
       res.status(400).json({ error: 'engagement_id must be a valid UUID' })
       return
@@ -272,7 +257,7 @@ export default async function handler(req, res) {
           ...geminiLogExtras(geminiMeta, { errorMessage: message, durationFallbackMs: durationMs() }),
         })
       } catch (logErr) {
-        console.error('[generate-competitor-analysis] Failed to log error:', logErr)
+        console.error('[competitor-analysis] Failed to log error:', logErr)
       }
     }
 

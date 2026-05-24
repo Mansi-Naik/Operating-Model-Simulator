@@ -1,4 +1,5 @@
 import callGemini, { geminiLogExtras } from './_lib/geminiClient.js'
+import { handleCompetitorAnalysis } from './_lib/competitorAnalysisCore.js'
 import { applyCorsHeaders, resolveAllowedCorsOrigin } from '../src/lib/apiCors.js'
 import { createSupabaseAdmin } from '../src/lib/supabaseAdmin.js'
 
@@ -112,8 +113,10 @@ function validateNarrativePayload(obj) {
 }
 
 /**
- * F5 sensitivity narrative: POST JSON `{ engagementId, sensitivityData }` → Gemini JSON → `{ narrative }`.
- * Logs to `llm_call_logs` with feature `f5_sensitivity`. Does not persist to `pipeline_runs`.
+ * F5 economics AI routes (single serverless function for Vercel Hobby limit):
+ *
+ * - `{ engagementId, sensitivityData }` → sensitivity narrative `{ narrative }`
+ * - `{ action: 'competitor_analysis', engagement_id }` → competitor analysis JSON
  *
  * **Env:** `GEMINI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_URL` or `VITE_SUPABASE_URL`
  *
@@ -141,6 +144,25 @@ export default async function handler(req, res) {
     return
   }
 
+  const body = req.body
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    const action = typeof body.action === 'string' ? body.action.trim() : ''
+    if (action === 'competitor_analysis') {
+      await handleCompetitorAnalysis(req, res)
+      return
+    }
+  }
+
+  await handleSensitivityNarrative(req, res, startTime)
+}
+
+/**
+ * @param {*} req
+ * @param {*} res
+ * @param {number} startTime
+ * @returns {Promise<void>}
+ */
+async function handleSensitivityNarrative(req, res, startTime) {
   const durationMs = () => Date.now() - startTime
 
   /** @type {string | undefined} */

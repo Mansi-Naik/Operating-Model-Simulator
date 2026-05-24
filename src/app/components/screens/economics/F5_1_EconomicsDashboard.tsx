@@ -288,10 +288,13 @@ export function F5_1_EconomicsDashboard({
     setIsLoadingCompetitor(true);
     setCompetitorError(null);
     try {
-      const response = await fetch('/api/generate-competitor-analysis', {
+      const response = await fetch('/api/generate-sensitivity-narrative', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ engagement_id: engagementIdFromUrl }),
+        body: JSON.stringify({
+          action: 'competitor_analysis',
+          engagement_id: engagementIdFromUrl,
+        }),
       });
       const responseText = await response.text();
       if (!response.ok) {
