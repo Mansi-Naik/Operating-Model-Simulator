@@ -1,6 +1,6 @@
 import { AlertTriangle, Check, Loader2, RefreshCw, Star } from 'lucide-react';
-import { useMemo, useState } from 'react';
-import { COMPETITOR_DIMENSIONS } from '../../../../lib/competitorLibrary';
+import { useEffect, useMemo, useState } from 'react';
+import { COMPETITOR_DIMENSIONS, logoUrlCandidates, resolveCompetitorDomain } from '../../../../lib/competitorLibrary';
 
 export interface CompetitorAnalysisData {
   competitors?: Array<Record<string, unknown>>;
@@ -50,21 +50,34 @@ function scorePillClass(score: number): string {
 }
 
 function CompetitorLogo({
-  logo,
-  short,
   name,
+  short,
+  domain,
+  logo,
 }: {
-  logo: string | null | undefined;
-  short: string;
   name: string;
+  short: string;
+  domain?: string | null;
+  logo?: string | null;
 }) {
-  const [failed, setFailed] = useState(false);
   const label = short || name.slice(0, 3).toUpperCase();
+  const resolvedDomain = resolveCompetitorDomain(name, logo, domain);
+  const candidates = useMemo(() => {
+    if (resolvedDomain) return logoUrlCandidates(resolvedDomain);
+    if (logo) return [logo];
+    return [];
+  }, [resolvedDomain, logo]);
 
-  if (!logo || failed) {
+  const [candidateIndex, setCandidateIndex] = useState(0);
+
+  useEffect(() => {
+    setCandidateIndex(0);
+  }, [name, resolvedDomain]);
+
+  if (candidates.length === 0 || candidateIndex >= candidates.length) {
     return (
       <div
-        className="w-9 h-9 rounded-full bg-[#FDF8F4] border border-[#494949]/15 flex items-center justify-center text-[10px] font-bold text-[#6D7069]"
+        className="w-10 h-10 rounded-full bg-[#FDF8F4] border border-[#494949]/15 flex items-center justify-center text-[10px] font-bold text-[#6D7069]"
         title={name}
       >
         {label}
@@ -72,12 +85,19 @@ function CompetitorLogo({
     );
   }
 
+  const src = candidates[candidateIndex];
+
   return (
     <img
-      src={logo}
-      alt=""
-      className="w-9 h-9 rounded-full object-contain bg-white border border-[#494949]/10 p-0.5"
-      onError={() => setFailed(true)}
+      src={src}
+      alt={`${name} logo`}
+      width={40}
+      height={40}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      className="w-10 h-10 rounded-full object-contain bg-white border border-[#494949]/10 p-1 shadow-sm"
+      onError={() => setCandidateIndex((i) => i + 1)}
     />
   );
 }
@@ -192,9 +212,10 @@ function CompetitorTable({ data }: { data: CompetitorAnalysisData }) {
               >
                 <td className="px-2 py-3">
                   <CompetitorLogo
-                    logo={typeof row.logo === 'string' ? row.logo : null}
-                    short={String(row.short ?? '')}
                     name={name}
+                    short={String(row.short ?? '')}
+                    domain={typeof row.domain === 'string' ? row.domain : null}
+                    logo={typeof row.logo === 'string' ? row.logo : null}
                   />
                 </td>
                 <td className="px-2 py-3 font-semibold text-[#161916] whitespace-nowrap">{name}</td>

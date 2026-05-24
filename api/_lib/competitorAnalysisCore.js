@@ -6,6 +6,7 @@ import {
   getCompetitorsForDomain,
   GENPACT_PROFILE,
   COMPETITOR_DIMENSIONS,
+  primaryLogoUrl,
 } from '../../src/lib/competitorLibrary.js'
 
 const FEATURE = 'competitor_analysis'
@@ -134,8 +135,10 @@ function normalizeCompetitorRow(row, profile) {
       rationale || 'Illustrative score based on publicly known market positioning.'
   }
 
+  const domain = profile.domain ?? null
   return {
     name: profile.name,
+    domain,
     scores: normalizedScores,
     rationales: normalizedRationales,
     strengths: Array.isArray(row.strengths)
@@ -144,7 +147,7 @@ function normalizeCompetitorRow(row, profile) {
     weaknesses: Array.isArray(row.weaknesses)
       ? row.weaknesses.map((s) => String(s).trim()).filter(Boolean).slice(0, 2)
       : [],
-    logo: profile.logo ?? null,
+    logo: domain ? primaryLogoUrl(domain) : profile.logo ?? null,
     short: profile.short ?? profile.name.slice(0, 3).toUpperCase(),
     is_genpact: profile.name === 'Genpact',
   }
