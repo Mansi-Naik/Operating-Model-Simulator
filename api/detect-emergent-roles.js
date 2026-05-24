@@ -136,6 +136,33 @@ function validateEmergentRolesPayload(obj) {
     ) {
       return `emergent_roles[${i}].sourcing_options must be a non-empty array of strings`
     }
+    if (row.daily_activities != null) {
+      if (!Array.isArray(row.daily_activities)) {
+        return `emergent_roles[${i}].daily_activities must be an array when provided`
+      }
+      let sum = 0
+      for (let j = 0; j < row.daily_activities.length; j++) {
+        const act = row.daily_activities[j]
+        if (!act || typeof act !== 'object' || Array.isArray(act)) {
+          return `emergent_roles[${i}].daily_activities[${j}] must be an object`
+        }
+        const a = /** @type {Record<string, unknown>} */ (act)
+        if (typeof a.name !== 'string' || !a.name.trim()) {
+          return `emergent_roles[${i}].daily_activities[${j}].name must be a non-empty string`
+        }
+        const mins = a.minutes
+        if (typeof mins !== 'number' || !Number.isFinite(mins) || mins <= 0) {
+          return `emergent_roles[${i}].daily_activities[${j}].minutes must be a positive number`
+        }
+        sum += mins
+      }
+      if (row.daily_activities.length > 0 && (sum < 240 || sum > 480)) {
+        return `emergent_roles[${i}].daily_activities minutes should sum to roughly 390 (got ${sum})`
+      }
+    }
+    if (row.day_in_the_life != null && typeof row.day_in_the_life !== 'string') {
+      return `emergent_roles[${i}].day_in_the_life must be a string when provided`
+    }
   }
   return null
 }

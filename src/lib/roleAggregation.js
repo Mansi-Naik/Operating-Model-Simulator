@@ -281,3 +281,222 @@ export function aggregateByRole(tasks, hierarchy) {
 
   return [...hierarchyAggregates, ...unmatchedAggregates]
 }
+
+const SHIFT_MINUTES = 540
+const BREAKS_MINUTES = 60
+const ADMIN_MINUTES = 30
+const BUFFER_MINUTES = 15
+const DEVELOPMENT_MINUTES = 45
+const TOTAL_OVERHEAD_MINUTES = BREAKS_MINUTES + ADMIN_MINUTES + BUFFER_MINUTES + DEVELOPMENT_MINUTES
+const PRODUCTIVE_MINUTES = SHIFT_MINUTES - TOTAL_OVERHEAD_MINUTES
+
+const OVERHEAD_ACTIVITIES = Object.freeze([
+  { name: 'Team standup + admin', minutes: ADMIN_MINUTES, type: 'overhead' },
+  { name: 'Breaks (lunch + short)', minutes: BREAKS_MINUTES, type: 'overhead' },
+  { name: 'Context switching / buffer', minutes: BUFFER_MINUTES, type: 'overhead' },
+  { name: 'Coaching / training', minutes: DEVELOPMENT_MINUTES, type: 'development' },
+])
+
+/**
+ * @param {number} mins
+ * @returns {string}
+ */
+export function formatShiftMinutes(mins) {
+  const total = Math.max(0, Math.round(mins))
+  const hours = Math.floor(total / 60)
+  const remainder = total % 60
+  return `${hours}h ${String(remainder).padStart(2, '0')}m`
+}
+
+/**
+ * @param {Array<{ minutes: number }>} activities
+ * @param {number} target
+ */
+function rebalanceMinutes(activities, target) {
+  if (!Array.isArray(activities) || activities.length === 0) return
+  let sum = activities.reduce((s, a) => s + Math.max(0, Math.round(a.minutes)), 0)
+  let diff = target - sum
+  let idx = activities.length - 1
+  while (diff !== 0 && idx >= 0) {
+    const next = Math.max(1, Math.round(activities[idx].minutes) + diff)
+    const applied = next - Math.round(activities[idx].minutes)
+    activities[idx].minutes = next
+    diff -= applied
+    idx -= 1
+  }
+}
+
+/**
+ * @param {Record<string, unknown> | null | undefined} role
+ * @param {Record<string, unknown>[] | null | undefined} tasks
+ * @param {number} productiveMinutes
+ * @returns {Array<{ name: string, minutes: number, type: 'productive', ai_allocation?: string }>}
+ */
+function computeRedesignedRoleActivities(role, tasks, productiveMinutes) {
+  const roleName =
+    typeof role?.role_name === 'string' && role.role_name.trim()
+      ? role.role_name.trim()
+      : typeof role?.future_role_name === 'string'
+        ? role.future_role_name.trim()
+        : ''
+  const roleKey = normalizeRoleKey(roleName)
+  const headcount = Math.max(
+    1,
+    toNonNegNumber(role?.headcount_future) ||
+      toNonNegNumber(role?.headcount_current) ||
+      toNonNegNumber(role?.current_headcount) ||
+      1,
+  )
+
+  const roleTasks = (Array.isArray(tasks) ? tasks : []).filter((t) => {
+    if (!t || typeof t !== 'object') return false
+    const rp = typeof t.role_performing === 'string' ? t.role_performing.trim() : ''
+    if (!roleKey || normalizeRoleKey(rp) !== roleKey) return false
+    return getFinalAllocation(t) !== 'tech-automated'
+  })
+
+  if (roleTasks.length === 0) {
+    return [{ name: 'AI output review and exception handling', minutes: productiveMinutes, type: 'productive' }]
+  }
+
+  const rawTaskMinutes = roleTasks.map((task) => {
+    const dailyVolume = toNonNegNumber(task.volume_per_day)
+    const minutesPerTask = toNonNegNumber(task.avg_time_minutes)
+    const totalDailyMinutes = dailyVolume * minutesPerTask
+    const alloc = getFinalAllocation(task)
+    const effortMultiplier = alloc === 'tech-assisted' ? 0.5 : 1
+    const perFteMinutes = (totalDailyMinutes * effortMultiplier) / headcount
+    return {
+      name:
+        typeof task.task_name === 'string' && task.task_name.trim()
+          ? task.task_name.trim()
+          : typeof task.task_id === 'string' && task.task_id.trim()
+            ? task.task_id.trim()
+            : 'Task',
+      raw_minutes: perFteMinutes,
+      allocation: alloc || 'human-only',
+    }
+  })
+
+  const totalRaw = rawTaskMinutes.reduce((sum, t) => sum + t.raw_minutes, 0)
+  if (totalRaw <= 0) {
+    return [{ name: 'Strategic activities (new scope)', minutes: productiveMinutes, type: 'productive' }]
+  }
+
+  const scaleFactor = productiveMinutes / totalRaw
+  let activities = rawTaskMinutes.map((t) => ({
+    name: t.name,
+    minutes: Math.round(t.raw_minutes * scaleFactor),
+    type: /** @type {'productive'} */ ('productive'),
+    ai_allocation: t.allocation,
+  }))
+  activities = activities.filter((a) => a.minutes >= 5)
+  if (activities.length === 0) {
+    return [{ name: 'Strategic activities (new scope)', minutes: productiveMinutes, type: 'productive' }]
+  }
+  activities.sort((a, b) => b.minutes - a.minutes)
+  rebalanceMinutes(activities, productiveMinutes)
+  return activities
+}
+
+/**
+ * @param {Record<string, unknown>} role
+ * @param {number} productiveMinutes
+ * @returns {Array<{ name: string, minutes: number, type: 'productive' }>}
+ */
+function generateEmergentRoleActivities(role, productiveMinutes) {
+  const daily = role.daily_activities
+  if (Array.isArray(daily) && daily.length > 0) {
+    const parsed = daily
+      .filter((a) => a && typeof a === 'object' && !Array.isArray(a))
+      .map((a) => {
+        const row = /** @type {Record<string, unknown>} */ (a)
+        const name = typeof row.name === 'string' ? row.name.trim() : ''
+        const minutes = toNonNegNumber(row.minutes)
+        if (!name || minutes <= 0) return null
+        return { name, minutes: Math.round(minutes), type: /** @type {'productive'} */ ('productive') }
+      })
+      .filter(Boolean)
+    if (parsed.length > 0) {
+      rebalanceMinutes(parsed, productiveMinutes)
+      return /** @type {Array<{ name: string, minutes: number, type: 'productive' }>} */ (parsed)
+    }
+  }
+
+  const responsibilities = Array.isArray(role.future_responsibilities)
+    ? role.future_responsibilities.filter((x) => typeof x === 'string' && x.trim()).map((x) => String(x).trim())
+    : []
+  const skills = Array.isArray(role.skills)
+    ? role.skills.filter((x) => typeof x === 'string' && x.trim()).map((x) => String(x).trim())
+    : []
+  const roleLabel = typeof role.name === 'string' && role.name.trim() ? role.name.trim() : 'Emergent role'
+
+  if (responsibilities.length >= 2) {
+    const slice = responsibilities.slice(0, 4)
+    const per = Math.floor(productiveMinutes / slice.length)
+    const activities = slice.map((name, idx) => ({
+      name: name.length > 48 ? `${name.slice(0, 45)}…` : name,
+      minutes: idx === slice.length - 1 ? productiveMinutes - per * (slice.length - 1) : per,
+      type: /** @type {'productive'} */ ('productive'),
+    }))
+    rebalanceMinutes(activities, productiveMinutes)
+    return activities
+  }
+
+  if (skills.length >= 2) {
+    const labels = skills.slice(0, 3).map((s) => `${s}-focused work`)
+    const per = Math.floor(productiveMinutes / labels.length)
+    const activities = labels.map((name, idx) => ({
+      name,
+      minutes: idx === labels.length - 1 ? productiveMinutes - per * (labels.length - 1) : per,
+      type: /** @type {'productive'} */ ('productive'),
+    }))
+    rebalanceMinutes(activities, productiveMinutes)
+    return activities
+  }
+
+  const activityCount = 3
+  const perActivity = Math.floor(productiveMinutes / activityCount)
+  return [
+    { name: `${roleLabel} primary activities`, minutes: perActivity, type: 'productive' },
+    { name: 'Cross-functional coordination', minutes: perActivity, type: 'productive' },
+    {
+      name: 'Exception handling and oversight',
+      minutes: productiveMinutes - 2 * perActivity,
+      type: 'productive',
+    },
+  ]
+}
+
+/**
+ * Daily 9-hour shift breakdown for F3 role detail (future-state responsibilities).
+ *
+ * @param {Record<string, unknown> | null | undefined} role Redesign or emergent role row.
+ * @param {Record<string, unknown>[] | null | undefined} tasks Engagement tasks (F2); omit for emergent.
+ * @param {boolean} isEmergent
+ * @returns {{
+ *   total_shift_minutes: number,
+ *   productive_minutes: number,
+ *   overhead_minutes: number,
+ *   activities: Array<{ name: string, minutes: number, type: 'productive' | 'overhead' | 'development', ai_allocation?: string }>
+ * }}
+ */
+export function computeDailyTimeBreakdown(role, tasks, isEmergent) {
+  const roleObj = role && typeof role === 'object' ? role : {}
+  let productiveActivities = isEmergent
+    ? generateEmergentRoleActivities(roleObj, PRODUCTIVE_MINUTES)
+    : computeRedesignedRoleActivities(roleObj, tasks, PRODUCTIVE_MINUTES)
+
+  const activities = [
+    ...productiveActivities.map((a) => ({ ...a })),
+    ...OVERHEAD_ACTIVITIES.map((a) => ({ ...a })),
+  ]
+  rebalanceMinutes(activities, SHIFT_MINUTES)
+
+  return {
+    total_shift_minutes: SHIFT_MINUTES,
+    productive_minutes: PRODUCTIVE_MINUTES,
+    overhead_minutes: TOTAL_OVERHEAD_MINUTES,
+    activities,
+  }
+}

@@ -19,6 +19,7 @@ import {
   topTaskLabelsFromAggregate,
 } from '../../../../lib/f3RoleDetailHelpers';
 import { supabase } from '../../../../supabaseClient';
+import { DailyTimeBreakdownSection } from './DailyTimeBreakdownSection';
 
 export interface F3_2_RoleDetailProps {
   onBack: () => void;
@@ -48,6 +49,7 @@ export function F3_2_RoleDetail({ onBack, roleName, engagementId }: F3_2_RoleDet
   const [hierarchyRow, setHierarchyRow] = useState<Record<string, unknown> | null>(null);
   const [redesign, setRedesign] = useState<Record<string, unknown> | null>(null);
   const [sourceTasks, setSourceTasks] = useState<Record<string, unknown>[]>([]);
+  const [allTasks, setAllTasks] = useState<Record<string, unknown>[]>([]);
   const [showSourceModal, setShowSourceModal] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [acceptanceStatus, setAcceptanceStatus] = useState<'pending' | 'accepted' | 'rejected'>('pending');
@@ -93,6 +95,7 @@ export function F3_2_RoleDetail({ onBack, roleName, engagementId }: F3_2_RoleDet
         setRedesign(rd);
         setAcceptanceStatus(getAcceptanceStatus(rd));
         setSourceTasks(filtered);
+        setAllTasks(rows);
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Failed to load role detail');
       } finally {
@@ -467,6 +470,17 @@ export function F3_2_RoleDetail({ onBack, roleName, engagementId }: F3_2_RoleDet
       <div className="bg-[#FDF8F4] border border-[#494949]/12 rounded-xl p-5 mb-6">
         <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">Day in the Life</div>
         <p className="text-[14px] text-[#494949] leading-relaxed">{dayInLife || '—'}</p>
+        {redesign ? (
+          <DailyTimeBreakdownSection
+            role={{
+              ...redesign,
+              role_name: displayRoleName,
+              headcount_current: aggregate?.current_headcount,
+            }}
+            tasks={allTasks}
+            isEmergent={false}
+          />
+        ) : null}
       </div>
 
       <div className="bg-[#FDF8F4] border border-[#494949]/12 rounded-xl p-6">

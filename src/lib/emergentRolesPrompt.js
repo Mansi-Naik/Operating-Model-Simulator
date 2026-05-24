@@ -62,6 +62,17 @@ ${rolesBlock}
    - sits_under: parent role name in the hierarchy (string)
    - skills: array of strings (key skills)
    - sourcing_options: array of short strings describing options such as "promote internally", "lateral move", "external hire" (use wording that fits the situation)
+   - daily_activities: 3-5 specific daily activities with minutes (productive time only; must sum to approximately 390 minutes)
+   - day_in_the_life: one short paragraph describing a typical future-state day (optional narrative; keep factual)
+
+For each emergent role, also describe 3-5 specific daily activities that role performs, with realistic minutes per day. The activities should sum to approximately 390 minutes (6.5 hours), reflecting productive task time within a 9-hour shift (the remaining 2.5 hours are overhead — breaks, admin, training).
+
+Examples of well-formed activities:
+- "AI output validation and rejection": 90 minutes
+- "Complex case investigation": 120 minutes
+- "Vendor escalation handling": 60 minutes
+
+Activities should be specific to the role's actual responsibilities, not generic.
 
 ## Output
 Return **only** valid JSON (no markdown) with this exact shape:
@@ -73,7 +84,11 @@ Return **only** valid JSON (no markdown) with this exact shape:
       "headcount_estimate": 0,
       "sits_under": "string",
       "skills": ["string"],
-      "sourcing_options": ["string"]
+      "sourcing_options": ["string"],
+      "daily_activities": [
+        { "name": "string", "minutes": 90 }
+      ],
+      "day_in_the_life": "string"
     }
   ]
 }

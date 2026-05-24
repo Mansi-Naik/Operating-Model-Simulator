@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { updateF3RoleAcceptance } from '../../../../lib/f3AcceptanceClient';
 import { getAcceptanceStatus, normalizeF3Roles } from '../../../../lib/f3RolesStorage';
 import { supabase } from '../../../../supabaseClient';
+import { DailyTimeBreakdownSection } from './DailyTimeBreakdownSection';
 
 interface F3_3_EmergentRoleDetailProps {
   onBack: () => void;
@@ -177,6 +178,12 @@ export function F3_3_EmergentRoleDetail({ onBack, roleName, engagementId }: F3_3
               )}
             </div>
           </div>
+
+          {row ? (
+            <div className="mb-8 pt-8 border-t border-[#494949]/12 bg-white/60 rounded-lg px-4 pb-2">
+              <DailyTimeBreakdownSection role={row} isEmergent />
+            </div>
+          ) : null}
 
           <div className="pt-8 border-t border-[#494949]/12">
             <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">Could Be Filled From</div>
