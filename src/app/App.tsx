@@ -252,6 +252,7 @@ export default function App() {
       case 'economics':
         return (
           <Economics
+            key={`economics-${activeEngagementId ?? 'none'}`}
             onBack={() => setCurrentScreen('pod-structure')}
             onProceedToF6={handleProceedToF6}
             onMissingF4Selection={handleMissingF4Selection}

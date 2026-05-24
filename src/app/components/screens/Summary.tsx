@@ -259,6 +259,24 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
   const headline = asObj(summary?.headline);
   const recommendation = String(headline.recommendation ?? 'NEEDS_REVIEW') as Recommendation;
 
+  const f5Economics = asObj(pipelineRuns.f5_economics);
+  const economicsResult = asObj(f5Economics.economics_result);
+  const genpactView = asObj(economicsResult.genpact_view);
+  const economicsSavings = asObj(economicsResult.savings);
+  const hasGenpactMargin =
+    economicsResult &&
+    (genpactView.gross_margin_pct_current != null || genpactView.gross_margin_pct_future != null);
+  const genpactMarginCurrent = Number(genpactView.gross_margin_pct_current);
+  const genpactMarginFuture = Number(genpactView.gross_margin_pct_future);
+  const clientSavingsPct = Math.round(Number(economicsSavings.monthly_savings_pct) || 0);
+  const headlinePrimary = hasGenpactMargin
+    ? `Projected Genpact margin uplift: ${genpactMarginCurrent.toFixed(0)}% → ${genpactMarginFuture.toFixed(0)}%`
+    : String(headline.one_line_summary ?? '');
+  const headlineSecondary =
+    hasGenpactMargin && Number.isFinite(clientSavingsPct)
+      ? `Client cost reduction: ${clientSavingsPct}%`
+      : '';
+
   const summaryContextChips = useMemo(() => {
     const raw = engagement?.intake_data;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [] as string[];
@@ -488,9 +506,16 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
           <h1 className="text-[36px] font-bold text-[#161916] mb-2 leading-tight">
             {String(headline.scenario_name ?? 'Operating model summary')}
           </h1>
-          <p className="text-[16px] text-[#494949] mb-4 max-w-[720px]">
-            {String(headline.one_line_summary ?? '')}
+          <p className="text-[18px] font-semibold text-[#161916] mb-2 max-w-[720px]">
+            {headlinePrimary}
           </p>
+          {headlineSecondary ? (
+            <p className="text-[15px] text-[#494949] mb-4 max-w-[720px]">{headlineSecondary}</p>
+          ) : (
+            <p className="text-[16px] text-[#494949] mb-4 max-w-[720px]">
+              {String(headline.one_line_summary ?? '')}
+            </p>
+          )}
           {summaryContextChips.length > 0 ? (
             <div className="flex flex-wrap gap-2 mb-3">
               {summaryContextChips.map((chip, i) => (

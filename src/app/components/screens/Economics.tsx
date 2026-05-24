@@ -53,7 +53,7 @@ export function Economics({ onBack, onProceedToF6, onMissingF4Selection, onGoToF
   }
 
   return (
-    <div className="relative h-full">
+    <div className="relative h-full" key={`economics-shell-${engagementIdFromUrl ?? 'none'}-${assumptionVersion}`}>
       {showAssumptionEditor && (
         <div
           className="absolute inset-0 bg-black/20 z-40"

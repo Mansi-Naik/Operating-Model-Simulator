@@ -101,6 +101,64 @@ export async function persistPipelineColumn(engagementId, column, payload) {
   return { ok: true, pipelineId: typeof ins?.id === 'string' ? ins.id : null }
 }
 
+/** F1 intake fields that must always come from engagements.intake_data, never stale f5 assumptions_used. */
+export const F5_INTAKE_OWNED_PREFERENCE_KEYS = [
+  'billing_model',
+  'margin_profile',
+  'expected_implementation_months',
+  'months_to_steady_state',
+  'currency',
+  'automation_appetite',
+  'risk_tolerance',
+  'pod_design',
+  'prefer_upskilling',
+  'include_emergent_roles',
+  'tech_build_cost_estimate',
+  'retraining_cost_per_fte',
+]
+
+/**
+ * @param {Record<string, unknown> | null | undefined} engagement
+ * @returns {Record<string, unknown>}
+ */
+export function readIntakePreferences(engagement) {
+  const intake =
+    engagement?.intake_data && typeof engagement.intake_data === 'object' && !Array.isArray(engagement.intake_data)
+      ? /** @type {Record<string, unknown>} */ (engagement.intake_data)
+      : {}
+  return intake.preferences && typeof intake.preferences === 'object' && !Array.isArray(intake.preferences)
+    ? /** @type {Record<string, unknown>} */ (intake.preferences)
+    : {}
+}
+
+/**
+ * Merge F5-2 cost knobs with live F1 intake (billing model always from intake).
+ *
+ * @param {Record<string, unknown> | null | undefined} engagement
+ * @param {Record<string, unknown>} assumptionsUsed Saved F5-2 overrides only (no intake-owned keys).
+ */
+export function mergePreferencesForF5Economics(engagement, assumptionsUsed) {
+  const intakePrefs = readIntakePreferences(engagement)
+  const costOnly = { ...(assumptionsUsed && typeof assumptionsUsed === 'object' ? assumptionsUsed : {}) }
+  for (const key of F5_INTAKE_OWNED_PREFERENCE_KEYS) {
+    delete costOnly[key]
+  }
+  return { ...costOnly, ...intakePrefs }
+}
+
+/**
+ * Persist only F5-2 assumption editor fields — never snapshot billing_model into assumptions_used.
+ *
+ * @param {Record<string, unknown>} mergedPreferences
+ */
+export function f5AssumptionsSnapshotForStorage(mergedPreferences) {
+  const out = { ...(mergedPreferences && typeof mergedPreferences === 'object' ? mergedPreferences : {}) }
+  for (const key of F5_INTAKE_OWNED_PREFERENCE_KEYS) {
+    delete out[key]
+  }
+  return out
+}
+
 /**
  * Stable signature of F1 preference fields that drive F5 economics (billing, margin, transition).
  *
@@ -112,9 +170,10 @@ export function f5IntakePreferencesSignature(engagement) {
     engagement?.intake_data && typeof engagement.intake_data === 'object' && !Array.isArray(engagement.intake_data)
       ? /** @type {Record<string, unknown>} */ (engagement.intake_data)
       : {}
-  const prefs =
-    intake.preferences && typeof intake.preferences === 'object' && !Array.isArray(intake.preferences)
-      ? /** @type {Record<string, unknown>} */ (intake.preferences)
+  const prefs = readIntakePreferences(engagement)
+  const bm =
+    prefs.billing_model && typeof prefs.billing_model === 'object' && !Array.isArray(prefs.billing_model)
+      ? /** @type {Record<string, unknown>} */ (prefs.billing_model)
       : {}
   const eng =
     intake.engagement && typeof intake.engagement === 'object' && !Array.isArray(intake.engagement)
@@ -134,7 +193,14 @@ export function f5IntakePreferencesSignature(engagement) {
     .sort((a, b) => String(a.role).localeCompare(String(b.role)))
 
   return stableStringify({
-    billing_model: prefs.billing_model ?? null,
+    billing_model: {
+      type: bm.type ?? null,
+      unit_cost: bm.unit_cost ?? null,
+      unit_cost_variance_pct: bm.unit_cost_variance_pct ?? null,
+      hourly_rate: bm.hourly_rate ?? null,
+      monthly_per_fte: bm.monthly_per_fte ?? null,
+      fixed_monthly_value: bm.fixed_monthly_value ?? null,
+    },
     margin_profile: prefs.margin_profile ?? null,
     expected_implementation_months: prefs.expected_implementation_months ?? null,
     months_to_steady_state: prefs.months_to_steady_state ?? null,
@@ -162,23 +228,28 @@ export function f5IntakePreferencesSignature(engagement) {
 export function buildF5EconomicsPayload(
   cached,
   freshResult,
-  assumptionsUsed,
+  mergedPreferences,
   selectedVariantName,
   sensitivityNarrative,
   intakeSignature = null,
 ) {
   const prev = cached && typeof cached === 'object' && !Array.isArray(cached) ? cached : {}
   const out = {
-    ...prev,
     selected_variant_at_compute: selectedVariantName,
-    assumptions_used: assumptionsUsed,
+    assumptions_used: f5AssumptionsSnapshotForStorage(
+      mergedPreferences && typeof mergedPreferences === 'object' ? mergedPreferences : {},
+    ),
     economics_result: freshResult,
     computed_at: new Date().toISOString(),
     intake_signature_at_compute: intakeSignature ?? null,
   }
-  if (typeof sensitivityNarrative === 'string' && sensitivityNarrative.trim()) {
-    out.sensitivity_narrative = sensitivityNarrative.trim()
-  }
+  const narrative =
+    typeof sensitivityNarrative === 'string' && sensitivityNarrative.trim()
+      ? sensitivityNarrative.trim()
+      : typeof prev.sensitivity_narrative === 'string'
+        ? prev.sensitivity_narrative.trim()
+        : ''
+  if (narrative) out.sensitivity_narrative = narrative
   return out
 }
 

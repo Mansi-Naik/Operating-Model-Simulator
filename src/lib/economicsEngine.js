@@ -452,6 +452,188 @@ export function computeGenpactRevenueImpact(currentState, futureState, billingMo
 }
 
 /**
+ * Genpact-strategy view: revenue, delivery cost, margin, and headcount from client state outputs.
+ *
+ * @param {Record<string, unknown> | null | undefined} currentState
+ * @param {Record<string, unknown> | null | undefined} futureState
+ * @param {Record<string, unknown> | null | undefined} billingModel
+ * @param {Record<string, unknown> | null | undefined} _engagement
+ * @returns {Record<string, unknown>}
+ */
+export function computeGenpactView(currentState, futureState, billingModel, _engagement) {
+  const costToDeliverCurrent = nonNeg(currentState?.monthly_cost_usd)
+  const costToDeliverFuture = nonNeg(futureState?.monthly_cost_usd)
+  const headcountCurrent = nonNeg(currentState?.headcount_total)
+  const headcountFuture = nonNeg(futureState?.headcount_total)
+
+  const bm =
+    billingModel && typeof billingModel === 'object' && !Array.isArray(billingModel)
+      ? /** @type {Record<string, unknown>} */ (billingModel)
+      : null
+  const billingType = typeof bm?.type === 'string' ? bm.type : ''
+
+  let revenueCurrent = 0
+  let revenueFuture = 0
+  let billingModelDisplay = 'Not specified'
+
+  if (!bm || billingType === 'not_specified') {
+    revenueCurrent = costToDeliverCurrent * 1.3
+    revenueFuture = costToDeliverFuture * 1.3
+    billingModelDisplay = 'Estimated (no billing model set)'
+  } else if (billingType === 'transactional') {
+    const monthlyVolume = nonNeg(currentState?.items_per_day) * WORKING_DAYS_PER_MONTH
+    const unitCost = nonNeg(bm.unit_cost)
+    revenueCurrent = monthlyVolume * unitCost
+    revenueFuture = monthlyVolume * unitCost
+    billingModelDisplay = `Transactional · $${unitCost}/unit`
+  } else if (billingType === 'hourly') {
+    const hoursPerFteMonth = 160
+    const totalHoursCurrent = headcountCurrent * hoursPerFteMonth
+    const totalHoursFuture = headcountFuture * hoursPerFteMonth
+    const hourlyRate = nonNeg(bm.hourly_rate)
+    revenueCurrent = totalHoursCurrent * hourlyRate
+    revenueFuture = totalHoursFuture * hourlyRate
+    billingModelDisplay = `Hourly · $${hourlyRate}/hr`
+  } else if (billingType === 'fte_based') {
+    const ratePerFte =
+      nonNeg(bm.monthly_per_fte) ||
+      (headcountCurrent > 0 ? (costToDeliverCurrent / headcountCurrent) * 1.3 : 0)
+    revenueCurrent = headcountCurrent * ratePerFte
+    revenueFuture = headcountFuture * ratePerFte
+    billingModelDisplay = `FTE-based · $${ratePerFte}/FTE/mo`
+  } else if (billingType === 'fixed') {
+    const fixedValue = nonNeg(bm.fixed_monthly_value)
+    revenueCurrent = fixedValue
+    revenueFuture = fixedValue
+    billingModelDisplay = `Fixed · $${fixedValue}/mo`
+  }
+
+  const grossProfitCurrent = revenueCurrent - costToDeliverCurrent
+  const grossProfitFuture = revenueFuture - costToDeliverFuture
+  const marginPctCurrent = revenueCurrent > 0 ? (grossProfitCurrent / revenueCurrent) * 100 : 0
+  const marginPctFuture = revenueFuture > 0 ? (grossProfitFuture / revenueFuture) * 100 : 0
+
+  const revenueDeltaPct =
+    revenueCurrent > 0 ? ((revenueFuture - revenueCurrent) / revenueCurrent) * 100 : 0
+  const costDeltaPct =
+    costToDeliverCurrent > 0
+      ? ((costToDeliverFuture - costToDeliverCurrent) / costToDeliverCurrent) * 100
+      : 0
+  const headcountDeltaPct =
+    headcountCurrent > 0 ? ((headcountFuture - headcountCurrent) / headcountCurrent) * 100 : 0
+  const marginDeltaPp = marginPctFuture - marginPctCurrent
+
+  let narrative = ''
+  if (billingType === 'transactional' || billingType === 'fixed') {
+    narrative = `Under ${billingModelDisplay}, Genpact revenue stays constant while delivery cost drops ${Math.abs(costDeltaPct).toFixed(0)}%. Margin expands from ${marginPctCurrent.toFixed(0)}% to ${marginPctFuture.toFixed(0)}%.`
+  } else if (billingType === 'hourly' || billingType === 'fte_based') {
+    narrative = `Under ${billingModelDisplay}, Genpact revenue drops ${Math.abs(revenueDeltaPct).toFixed(0)}% as billable ${billingType === 'hourly' ? 'hours' : 'FTEs'} shrink with automation. Margin still improves from ${marginPctCurrent.toFixed(0)}% to ${marginPctFuture.toFixed(0)}% because cost drops faster than revenue.`
+  } else {
+    narrative = 'Set billing model in F1 Preferences to see Genpact revenue and margin projections.'
+  }
+
+  return {
+    revenue_current: revenueCurrent,
+    revenue_future: revenueFuture,
+    revenue_delta_pct: revenueDeltaPct,
+    cost_to_deliver_current: costToDeliverCurrent,
+    cost_to_deliver_future: costToDeliverFuture,
+    cost_delta_pct: costDeltaPct,
+    gross_margin_pct_current: marginPctCurrent,
+    gross_margin_pct_future: marginPctFuture,
+    gross_margin_delta_pp: marginDeltaPp,
+    headcount_current: headcountCurrent,
+    headcount_future: headcountFuture,
+    headcount_delta_pct: headcountDeltaPct,
+    billing_model_display: billingModelDisplay,
+    narrative,
+    monthly_savings: costToDeliverCurrent - costToDeliverFuture,
+    revenue_per_fte_current: headcountCurrent > 0 ? revenueCurrent / headcountCurrent : 0,
+    revenue_per_fte_future: headcountFuture > 0 ? revenueFuture / headcountFuture : 0,
+  }
+}
+
+const BILLING_MODEL_LABELS = {
+  fixed: 'Fixed fee',
+  transactional: 'Transactional',
+  fte_based: 'FTE-based',
+  hourly: 'Hourly',
+}
+
+/**
+ * Compares billing models on projected future gross margin (strategy advisory).
+ *
+ * @param {Record<string, unknown> | null | undefined} currentState
+ * @param {Record<string, unknown> | null | undefined} futureState
+ * @param {Record<string, unknown> | null | undefined} billingModel
+ * @param {Record<string, unknown> | null | undefined} engagement
+ * @returns {Record<string, unknown>}
+ */
+export function computeBillingModelRecommendation(currentState, futureState, billingModel, engagement) {
+  const bmBase =
+    billingModel && typeof billingModel === 'object' && !Array.isArray(billingModel)
+      ? /** @type {Record<string, unknown>} */ (billingModel)
+      : {}
+  const costCurrent = nonNeg(currentState?.monthly_cost_usd)
+  const hcCurrent = nonNeg(currentState?.headcount_total)
+  const itemsPerDay = nonNeg(currentState?.items_per_day)
+  const monthlyVolume = itemsPerDay * WORKING_DAYS_PER_MONTH
+  const defaultFteRate = hcCurrent > 0 ? (costCurrent / hcCurrent) * 1.3 : 0
+  const unitCost = nonNeg(bmBase.unit_cost)
+  const hourlyRate = nonNeg(bmBase.hourly_rate)
+  const monthlyPerFte = nonNeg(bmBase.monthly_per_fte)
+  const fixedMonthly = nonNeg(bmBase.fixed_monthly_value)
+
+  const candidates = [
+    {
+      type: 'fixed',
+      model: { type: 'fixed', fixed_monthly_value: fixedMonthly || costCurrent * 1.05 },
+    },
+    {
+      type: 'transactional',
+      model: {
+        type: 'transactional',
+        unit_cost: unitCost || (monthlyVolume > 0 ? (costCurrent * 1.05) / monthlyVolume : 0),
+      },
+    },
+    { type: 'fte_based', model: { type: 'fte_based', monthly_per_fte: monthlyPerFte || defaultFteRate } },
+    { type: 'hourly', model: { type: 'hourly', hourly_rate: hourlyRate || defaultFteRate / 160 } },
+  ]
+
+  /** @type {{ type: string, margin: number, display: string } | null} */
+  let best = null
+  for (const c of candidates) {
+    const view = computeGenpactView(currentState, futureState, c.model, engagement)
+    const margin = toNum(view.gross_margin_pct_future)
+    if (!best || margin > best.margin) {
+      best = { type: c.type, margin, display: String(view.billing_model_display ?? '') }
+    }
+  }
+
+  const currentView = computeGenpactView(currentState, futureState, billingModel, engagement)
+  const currentType = typeof bmBase.type === 'string' ? bmBase.type : 'not_specified'
+  const currentMargin = toNum(currentView.gross_margin_pct_future)
+  const bestLabel = BILLING_MODEL_LABELS[best?.type ?? ''] ?? best?.type ?? '—'
+
+  let rationale = ''
+  if (best && currentType !== best.type) {
+    rationale = `${bestLabel} pricing maximizes projected future gross margin (${best.margin.toFixed(0)}% vs ${currentMargin.toFixed(0)}% under current model).`
+  } else {
+    rationale = `Current billing model already aligns with the strongest projected margin (${currentMargin.toFixed(0)}%).`
+  }
+
+  return {
+    recommended_type: best?.type ?? null,
+    recommended_label: bestLabel,
+    recommended_margin_future_pct: best?.margin ?? 0,
+    recommended_display: best?.display ?? '',
+    current_type: currentType,
+    current_margin_future_pct: currentMargin,
+    rationale,
+  }
+}
+
+/**
  * @param {Record<string, unknown> | null | undefined} engagement
  * @param {Record<string, unknown> | null | undefined} prefs
  * @returns {number}
@@ -1176,6 +1358,13 @@ export function runFullEconomics(engagement, tasks, f4SelectedVariant, f3Roles, 
       ? /** @type {Record<string, unknown>} */ (billingModelRaw)
       : null
   const genpact_revenue_impact = computeGenpactRevenueImpact(current_state, future_state, billingModel)
+  const genpact_view = computeGenpactView(current_state, future_state, billingModel, engagement)
+  const billing_model_recommendation = computeBillingModelRecommendation(
+    current_state,
+    future_state,
+    billingModel,
+    engagement,
+  )
   const monthsToSteady = nonNeg(prefs.months_to_steady_state) || DEFAULT_MONTHS_TO_STEADY
   const savings_curve = computeRampedSavingsCurve(
     current_state.monthly_cost_usd,
@@ -1198,6 +1387,8 @@ export function runFullEconomics(engagement, tasks, f4SelectedVariant, f3Roles, 
     savings,
     transition_cost,
     genpact_revenue_impact,
+    genpact_view,
+    billing_model_recommendation,
     savings_curve,
     payback_month,
     npv_36mo,

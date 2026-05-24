@@ -2,12 +2,15 @@ import { Settings, ArrowRight, TrendingUp, Check, Sparkles, Info, AlertTriangle 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PipelineReRunButton } from '../../PipelineReRunButton';
 import { useEngagement } from '../../../../hooks/useEngagement';
+import { formatBillingModelForDisplay } from '../../../../lib/intakePhaseADisplay';
 import { normalizeF3Roles } from '../../../../lib/f3RolesStorage';
 import { runFullEconomics } from '../../../../lib/economicsEngine';
 import {
   buildF5EconomicsPayload,
   deterministicJsonEqual,
   f5IntakePreferencesSignature,
+  mergePreferencesForF5Economics,
+  readIntakePreferences,
   persistPipelineColumn,
   stableStringify,
 } from '../../../../lib/pipelineDeterministicRefresh';
@@ -77,11 +80,6 @@ function fmtDelta(value: number, suffix = ''): string {
   return `${sign}${Math.abs(value).toFixed(1)}${suffix}`;
 }
 
-function sensitivityRangeLabel(basePct: number): string {
-  if (!Number.isFinite(basePct)) return 'Range: n/a';
-  return `Range: ${fmtPct(basePct - 5)}–${fmtPct(basePct + 5)}`;
-}
-
 function roleHc(result: Record<string, unknown>, role: string): number {
   const rows = Array.isArray(result.role_breakdown) ? result.role_breakdown : [];
   const target = role.toLowerCase();
@@ -105,6 +103,26 @@ function capacityPerFteLabel(currentState: Record<string, unknown>, futureState:
   const pct = currentRatio > 0 ? ((futureRatio - currentRatio) / currentRatio) * 100 : 0;
   const sign = pct >= 0 ? '+' : '−';
   return `${sign}${Math.abs(pct).toFixed(0)}%`;
+}
+
+function readScaleTarget(engagement: Record<string, unknown> | null): number | null {
+  const raw = engagement?.intake_data;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const intake = raw as Record<string, unknown>;
+  const prefs = asObj(intake.preferences);
+  const eng = asObj(intake.engagement);
+  const goals = asObj(eng.goals);
+  for (const candidate of [prefs.scale_target, intake.scale_target, goals.scale_target, eng.scale_target]) {
+    const n = toNum(candidate);
+    if (n > 0) return n;
+  }
+  return null;
+}
+
+function deltaColorClass(value: number, positiveIsGood: boolean): string {
+  if (value === 0 || !Number.isFinite(value)) return 'text-[#6D7069]';
+  const good = positiveIsGood ? value > 0 : value < 0;
+  return good ? 'text-[#548235]' : 'text-[#FD4E59]';
 }
 
 function chartPath(points: { x: number; y: number }[]): string {
@@ -321,7 +339,7 @@ export function F5_1_EconomicsDashboard({
   }, [pipelineLoading, pipelineError, selectedVariant, onMissingF4Selection]);
 
   const intakePreferences = useMemo(
-    () => asObj(asObj((engagement as Record<string, unknown> | null)?.intake_data).preferences),
+    () => readIntakePreferences(engagement as Record<string, unknown> | null),
     [engagement],
   );
 
@@ -338,13 +356,14 @@ export function F5_1_EconomicsDashboard({
     return Boolean(cachedSig && intakeSignature && cachedSig !== intakeSignature);
   }, [cachedF5Payload, intakeSignature]);
 
-  /** F1 intake preferences override stale cached assumption snapshots (billing, margin, etc.). */
+  /** Billing model and other intake-owned fields always from live F1 intake_data.preferences. */
   const preferences = useMemo(
-    () => ({
-      ...assumptionsUsed,
-      ...intakePreferences,
-    }),
-    [assumptionsUsed, intakePreferences],
+    () =>
+      mergePreferencesForF5Economics(
+        engagement as Record<string, unknown> | null,
+        assumptionsUsed,
+      ),
+    [engagement, assumptionsUsed],
   );
 
   useEffect(() => {
@@ -353,13 +372,14 @@ export function F5_1_EconomicsDashboard({
         ? cachedF5Payload.intake_signature_at_compute
         : null;
     if (cachedSig && intakeSignature && cachedSig !== intakeSignature) {
+      forceRecomputeRef.current = true;
       narrativeFetchedRef.current = false;
       setSensitivityNarrative('');
     }
   }, [cachedF5Payload, intakeSignature]);
 
   const economicsResult = useMemo(() => {
-    if (!engagement || !selectedVariant) return null;
+    if (!engagement || !selectedVariant || engagementLoading || pipelineLoading) return null;
     return runFullEconomics(
       engagement as Record<string, unknown>,
       Array.isArray(tasks) ? (tasks as Record<string, unknown>[]) : [],
@@ -367,7 +387,7 @@ export function F5_1_EconomicsDashboard({
       f3Roles,
       preferences,
     ) as Record<string, unknown>;
-  }, [engagement, tasks, selectedVariant, f3Roles, preferences]);
+  }, [engagement, tasks, selectedVariant, f3Roles, preferences, engagementLoading, pipelineLoading]);
 
   const displayEconomics = economicsResult;
 
@@ -506,30 +526,38 @@ export function F5_1_EconomicsDashboard({
   const drivers = Array.isArray(sensitivity.drivers) ? (sensitivity.drivers as Record<string, unknown>[]) : [];
   const paybackMonth = Math.floor(toNum(displayEconomics?.payback_month));
 
-  const genpact = asObj(displayEconomics?.genpact_revenue_impact);
-  const genpactApplicable = genpact.applicable === true;
-  const billingTypeLabel = String(genpact.billing_model_type ?? '');
+  const genpactView = asObj(displayEconomics?.genpact_view);
+  const billingRecommendation = asObj(displayEconomics?.billing_model_recommendation);
+  const billingTypeLabel = String(asObj(intakePreferences.billing_model).type ?? '');
 
   const monthlySavingsPct = toNum(savings.monthly_savings_pct);
-  const monthlyCostDelta = toNum(futureState.monthly_cost_usd) - toNum(currentState.monthly_cost_usd);
-  const monthlyCostDeltaPct =
-    toNum(currentState.monthly_cost_usd) > 0
-      ? (monthlyCostDelta / toNum(currentState.monthly_cost_usd)) * 100
-      : 0;
-  const revenueDeltaPct = genpactApplicable ? toNum(genpact.revenue_delta_pct) : 0;
-  const grossMarginCurrent = genpactApplicable ? toNum(genpact.gross_margin_pct_current) : 0;
-  const grossMarginFuture = genpactApplicable ? toNum(genpact.gross_margin_pct_future) : 0;
-  const grossMarginDeltaPp = grossMarginFuture - grossMarginCurrent;
+  const revenueCurrent = toNum(genpactView.revenue_current);
+  const revenueFuture = toNum(genpactView.revenue_future);
+  const revenueDeltaPct = toNum(genpactView.revenue_delta_pct);
+  const costDeliverCurrent = toNum(genpactView.cost_to_deliver_current);
+  const costDeliverFuture = toNum(genpactView.cost_to_deliver_future);
+  const costDeltaPct = toNum(genpactView.cost_delta_pct);
+  const grossMarginCurrent = toNum(genpactView.gross_margin_pct_current);
+  const grossMarginFuture = toNum(genpactView.gross_margin_pct_future);
+  const grossMarginDeltaPp = toNum(genpactView.gross_margin_delta_pp);
+  const genpactHcCurrent = toNum(genpactView.headcount_current);
+  const genpactHcFuture = toNum(genpactView.headcount_future);
+  const genpactHcDelta = genpactHcFuture - genpactHcCurrent;
+  const genpactHcDeltaPct = toNum(genpactView.headcount_delta_pct);
+  const billingModelDisplay = String(genpactView.billing_model_display ?? 'Not specified');
+  const genpactNarrative = String(genpactView.narrative ?? '');
   const showGainshareWarning =
-    genpactApplicable &&
-    (billingTypeLabel === 'fte_based' || billingTypeLabel === 'hourly') &&
-    revenueDeltaPct < -10;
+    (billingTypeLabel === 'fte_based' || billingTypeLabel === 'hourly') && revenueDeltaPct < -10;
+
   const costPerItemReduction = toNum(savings.cost_per_item_reduction_pct);
-  const overheadDeltaPp = toNum(futureState.supervisor_overhead_pct) - toNum(currentState.supervisor_overhead_pct);
+  const itemsPerDay = toNum(currentState.items_per_day);
   const agentToday = frontlineHc(currentState);
   const agentFuture = frontlineHc(futureState);
   const qualityText = `95% target met`;
   const capacityLabel = capacityPerFteLabel(currentState, futureState);
+  const scaleTarget = readScaleTarget(engagement as Record<string, unknown> | null);
+  const capacityScaleLabel =
+    scaleTarget != null && scaleTarget > 0 ? `1x → ${scaleTarget}x` : capacityLabel;
 
   if (loading) {
     return (
@@ -608,6 +636,10 @@ export function F5_1_EconomicsDashboard({
           <p className="text-[13px] text-[#6D7069]">
             All values are indicative. Adjust assumptions in the panel to explore alternatives.
           </p>
+          <p className="text-[13px] text-[#494949] mt-2">
+            Billing from intake:{' '}
+            {formatBillingModelForDisplay(intakePreferences.billing_model) ?? 'not specified'}
+          </p>
         </div>
 
         {intakeChangedSinceLastSave ? (
@@ -637,83 +669,109 @@ export function F5_1_EconomicsDashboard({
           </div>
         ) : null}
 
-        {/* Primary Stat Tiles */}
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          {/* Tile 1 - Monthly Cost */}
+        {/* Genpact financials — primary stat tiles */}
+        <div className="mb-4">
+          <h2 className="text-[16px] font-bold text-[#161916] mb-1">GENPACT FINANCIALS</h2>
+          <p className="text-[13px] text-[#6D7069]">
+            Under {billingModelDisplay}, this engagement projects:
+          </p>
+        </div>
+
+        <div className="grid grid-cols-4 gap-4 mb-4">
           <div className="bg-white border border-[#494949]/12 rounded-xl p-5 shadow-sm">
             <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">
-              Monthly Cost
+              Revenue from client
             </div>
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-[18px] font-medium text-[#6D7069]">{fmtCurrency(toNum(currentState.monthly_cost_usd))}</span>
+              <span className="text-[18px] font-medium text-[#6D7069]">{fmtCurrency(revenueCurrent)}</span>
               <span className="text-[14px] text-[#6D7069]">→</span>
-              <span className="text-[28px] font-bold text-[#161916]">{fmtCurrency(toNum(futureState.monthly_cost_usd))}</span>
+              <span className="text-[28px] font-bold text-[#161916]">{fmtCurrency(revenueFuture)}</span>
             </div>
-            <div className={`text-[18px] font-bold mb-1 ${monthlyCostDelta < 0 ? 'text-[#548235]' : 'text-[#161916]'}`}>
-              {fmtDelta(monthlySavingsPct * -1, '%')}
+            <div className={`text-[18px] font-bold mb-1 ${deltaColorClass(revenueDeltaPct, true)}`}>
+              {fmtDelta(revenueDeltaPct, '%')}
             </div>
-            <div className="text-[12px] italic text-[#6D7069] mb-3">{sensitivityRangeLabel(monthlySavingsPct)}</div>
-            {/* Sparkline */}
-            <div className="h-6 bg-[#FDF8F4] rounded-full overflow-hidden relative">
-              <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 20">
-                <path
-                  d="M 0,8 Q 25,6 40,10 T 70,12 T 100,16"
-                  fill="none"
-                  stroke="#FD4E59"
-                  strokeWidth="2"
-                />
-              </svg>
-            </div>
+            <div className="text-[12px] text-[#6D7069]">{billingModelDisplay}</div>
           </div>
 
-          {/* Tile 2 - Cost Per Item */}
           <div className="bg-white border border-[#494949]/12 rounded-xl p-5 shadow-sm">
             <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">
-              Cost Per Item
+              Cost to deliver
             </div>
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-[18px] font-medium text-[#6D7069]">{fmtCurrency2(toNum(currentState.cost_per_item))}</span>
+              <span className="text-[18px] font-medium text-[#6D7069]">{fmtCurrency(costDeliverCurrent)}</span>
               <span className="text-[14px] text-[#6D7069]">→</span>
-              <span className="text-[28px] font-bold text-[#161916]">{fmtCurrency2(toNum(futureState.cost_per_item))}</span>
+              <span className="text-[28px] font-bold text-[#161916]">{fmtCurrency(costDeliverFuture)}</span>
             </div>
-            <div className={`text-[18px] font-bold mb-1 ${costPerItemReduction > 0 ? 'text-[#548235]' : 'text-[#161916]'}`}>
-              {fmtDelta(costPerItemReduction * -1, '%')}
+            <div className={`text-[18px] font-bold mb-1 ${deltaColorClass(costDeltaPct, false)}`}>
+              {fmtDelta(costDeltaPct, '%')}
             </div>
-            <div className="text-[12px] italic text-[#6D7069]">{sensitivityRangeLabel(costPerItemReduction)}</div>
+            <div className="text-[12px] text-[#6D7069]">Labor + overhead, fully loaded</div>
           </div>
 
-          {/* Tile 3 - Headcount */}
           <div className="bg-white border border-[#494949]/12 rounded-xl p-5 shadow-sm">
             <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">
-              Headcount
+              Gross margin
             </div>
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-[18px] font-medium text-[#6D7069]">{Math.round(toNum(currentState.headcount_total))}</span>
+              <span className="text-[18px] font-medium text-[#6D7069]">{fmtPct(grossMarginCurrent, 0)}</span>
               <span className="text-[14px] text-[#6D7069]">→</span>
-              <span className="text-[28px] font-bold text-[#161916]">{Math.round(toNum(futureState.headcount_total))}</span>
+              <span className="text-[28px] font-bold text-[#161916]">{fmtPct(grossMarginFuture, 0)}</span>
+            </div>
+            <div className={`text-[18px] font-bold mb-1 ${deltaColorClass(grossMarginDeltaPp, true)}`}>
+              {fmtDelta(grossMarginDeltaPp, ' pp')}
+            </div>
+            <div className="text-[12px] text-[#6D7069]">Revenue minus cost</div>
+          </div>
+
+          <div className="bg-white border border-[#494949]/12 rounded-xl p-5 shadow-sm">
+            <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">
+              Headcount deployed
+            </div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[18px] font-medium text-[#6D7069]">{Math.round(genpactHcCurrent)}</span>
+              <span className="text-[14px] text-[#6D7069]">→</span>
+              <span className="text-[28px] font-bold text-[#161916]">{Math.round(genpactHcFuture)}</span>
             </div>
             <div className="text-[18px] font-bold text-[#6D7069] mb-1">
-              {fmtDelta(toNum(savings.headcount_delta))} ({fmtDelta(toNum(savings.headcount_delta_pct), '%')})
+              {fmtDelta(genpactHcDelta)} ({fmtDelta(genpactHcDeltaPct, '%')})
             </div>
-            <div className="text-[12px] text-[#6D7069]">Net change after redesign</div>
-          </div>
-
-          {/* Tile 4 - Supervisor Overhead */}
-          <div className="bg-white border border-[#494949]/12 rounded-xl p-5 shadow-sm">
-            <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-3">
-              Supervisor Overhead
-            </div>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-[18px] font-medium text-[#6D7069]">{fmtPct(toNum(currentState.supervisor_overhead_pct))}</span>
-              <span className="text-[14px] text-[#6D7069]">→</span>
-              <span className="text-[28px] font-bold text-[#161916]">{fmtPct(toNum(futureState.supervisor_overhead_pct))}</span>
-            </div>
-            <div className={`text-[18px] font-bold mb-1 ${overheadDeltaPp < 0 ? 'text-[#548235]' : 'text-[#161916]'}`}>
-              {fmtDelta(overheadDeltaPp, 'pp')}
-            </div>
-            <div className="text-[12px] text-[#6D7069]">% of total cost</div>
+            <div className="text-[12px] text-[#6D7069]">Operational FTE</div>
           </div>
         </div>
+
+        {billingRecommendation.recommended_type ? (
+          <div className="bg-[#FFF8ED] border border-[#FFAB28]/35 border-l-[3px] border-l-[#FFAB28] rounded-xl p-5 mb-6 shadow-sm">
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <h3 className="text-[15px] font-bold text-[#161916]">Recommended billing model</h3>
+              <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-[#FFF0DC] text-[#6D7069] border border-[#161916]/10">
+                Advisory
+              </span>
+            </div>
+            <p className="text-[14px] text-[#161916] leading-relaxed mb-2">
+              <span className="font-semibold">{String(billingRecommendation.recommended_label ?? '')}</span>
+              {' · '}
+              {String(billingRecommendation.rationale ?? '')}
+            </p>
+            {genpactNarrative ? (
+              <p className="text-[13px] text-[#494949] leading-relaxed mb-2">{genpactNarrative}</p>
+            ) : null}
+            {showGainshareWarning ? (
+              <div className="inline-flex items-start gap-2 rounded-md border border-[#FFAB28]/50 bg-[#FFF0DC] px-3 py-2 text-[12px] text-[#494949] max-w-full">
+                <AlertTriangle className="w-4 h-4 text-[#FFAB28] shrink-0 mt-0.5" aria-hidden />
+                <span>Consider proposing gainshare/hybrid pricing to align incentives when billable units shrink.</span>
+              </div>
+            ) : null}
+            {onGoToF1Preferences ? (
+              <button
+                type="button"
+                onClick={onGoToF1Preferences}
+                className="mt-3 text-[13px] font-medium text-[#FD4E59] underline hover:text-[#FD4E59]/80"
+              >
+                Change billing model in F1
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* Secondary Stats Row */}
         <div className="grid grid-cols-2 gap-4 mb-6">
@@ -761,111 +819,61 @@ export function F5_1_EconomicsDashboard({
           <SavingsCurveChart curve={curve} paybackMonth={paybackMonth} />
         </div>
 
-        {/* Genpact Revenue Impact (internal) */}
-        <div className="bg-[#FFF8ED] border border-[#FFAB28]/35 border-l-[3px] border-l-[#FFAB28] rounded-xl p-6 mb-6 shadow-sm">
-          <div className="flex items-center gap-3 mb-4">
-            <h2 className="text-[16px] font-bold text-[#161916]">Genpact Revenue Impact</h2>
-            <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-[#FFF0DC] text-[#6D7069] border border-[#161916]/10">
-              Internal
+        {/* Client-facing narrative (proposal metrics) */}
+        <div className="bg-[#FDF8F4] border border-[#494949]/12 rounded-xl p-6 mb-6">
+          <div className="flex flex-wrap items-center gap-3 mb-1">
+            <h2 className="text-[16px] font-bold text-[#161916]">What we tell the client</h2>
+            <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-white text-[#6D7069] border border-[#161916]/10">
+              Client-facing
             </span>
           </div>
-
-          {!genpactApplicable ? (
-            <div className="flex flex-wrap items-center gap-2 text-[14px] text-[#494949]">
-              <span>
-                {typeof genpact.message === 'string' && genpact.message.trim()
-                  ? genpact.message
-                  : 'Add billing model in F1 Preferences to see Genpact-side impact.'}
-              </span>
-              {onGoToF1Preferences ? (
-                <button
-                  type="button"
-                  onClick={onGoToF1Preferences}
-                  className="text-[13px] font-medium text-[#FD4E59] underline hover:text-[#FD4E59]/80"
-                >
-                  Go to F1
-                </button>
-              ) : null}
+          <p className="text-[13px] text-[#6D7069] mb-5">
+            These are the metrics the client cares about. Use these in the proposal narrative.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white/70 border border-[#161916]/8 rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
+                Cost reduction for client
+              </div>
+              <div className={`text-[24px] font-bold ${monthlySavingsPct > 0 ? 'text-[#548235]' : 'text-[#161916]'}`}>
+                {fmtPct(monthlySavingsPct, 0)}
+              </div>
+              <div className="text-[12px] text-[#6D7069] mt-1">
+                {fmtCurrency(toNum(currentState.monthly_cost_usd))} → {fmtCurrency(toNum(futureState.monthly_cost_usd))} / mo
+              </div>
             </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-3 gap-4 mb-4">
-                <div className="bg-white/80 border border-[#161916]/8 rounded-lg p-4">
-                  <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
-                    Monthly revenue
-                  </div>
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="text-[16px] font-medium text-[#6D7069]">
-                      {fmtCurrency(toNum(genpact.monthly_revenue_current), false)}
-                    </span>
-                    <span className="text-[13px] text-[#6D7069]">→</span>
-                    <span className="text-[22px] font-bold text-[#161916]">
-                      {fmtCurrency(toNum(genpact.monthly_revenue_future), false)}
-                    </span>
-                  </div>
-                  <div
-                    className={`text-[16px] font-bold mb-1 ${
-                      revenueDeltaPct > 0 ? 'text-[#548235]' : revenueDeltaPct < 0 ? 'text-[#FD4E59]' : 'text-[#6D7069]'
-                    }`}
-                  >
-                    {fmtDelta(revenueDeltaPct, '%')}
-                  </div>
-                  <div className="text-[12px] text-[#6D7069]">
-                    Under {billingTypeLabel.replace(/_/g, ' ')} model
-                  </div>
+            {itemsPerDay > 0 ? (
+              <div className="bg-white/70 border border-[#161916]/8 rounded-lg p-4">
+                <div className="text-[10px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
+                  Cost per item
                 </div>
-                <div className="bg-white/80 border border-[#161916]/8 rounded-lg p-4">
-                  <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
-                    Monthly cost
-                  </div>
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="text-[16px] font-medium text-[#6D7069]">
-                      {fmtCurrency(toNum(currentState.monthly_cost_usd), false)}
-                    </span>
-                    <span className="text-[13px] text-[#6D7069]">→</span>
-                    <span className="text-[22px] font-bold text-[#161916]">
-                      {fmtCurrency(toNum(futureState.monthly_cost_usd), false)}
-                    </span>
-                  </div>
-                  <div
-                    className={`text-[16px] font-bold mb-1 ${
-                      monthlyCostDeltaPct < 0 ? 'text-[#548235]' : monthlyCostDeltaPct > 0 ? 'text-[#FD4E59]' : 'text-[#6D7069]'
-                    }`}
-                  >
-                    {fmtDelta(monthlyCostDeltaPct, '%')}
-                  </div>
-                  <div className="text-[12px] text-[#6D7069]">Operating cost (model)</div>
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <span className="text-[14px] font-medium text-[#6D7069]">{fmtCurrency2(toNum(currentState.cost_per_item))}</span>
+                  <span className="text-[12px] text-[#6D7069]">→</span>
+                  <span className="text-[18px] font-bold text-[#161916]">{fmtCurrency2(toNum(futureState.cost_per_item))}</span>
                 </div>
-                <div className="bg-white/80 border border-[#161916]/8 rounded-lg p-4">
-                  <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
-                    Gross margin
-                  </div>
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="text-[16px] font-medium text-[#6D7069]">{fmtPct(grossMarginCurrent, 1)}</span>
-                    <span className="text-[13px] text-[#6D7069]">→</span>
-                    <span className="text-[22px] font-bold text-[#161916]">{fmtPct(grossMarginFuture, 1)}</span>
-                  </div>
-                  <div
-                    className={`text-[16px] font-bold mb-1 ${
-                      grossMarginDeltaPp > 0 ? 'text-[#548235]' : grossMarginDeltaPp < 0 ? 'text-[#FD4E59]' : 'text-[#6D7069]'
-                    }`}
-                  >
-                    {fmtDelta(grossMarginDeltaPp, ' pp')}
-                  </div>
-                  <div className="text-[12px] text-[#6D7069]">vs modeled monthly cost</div>
+                <div className={`text-[14px] font-bold ${costPerItemReduction > 0 ? 'text-[#548235]' : 'text-[#6D7069]'}`}>
+                  {fmtDelta(-costPerItemReduction, '%')}
                 </div>
               </div>
-              <p className="text-[14px] text-[#161916] leading-relaxed mb-3">{String(genpact.narrative ?? '')}</p>
-              {showGainshareWarning ? (
-                <div className="inline-flex items-start gap-2 rounded-md border border-[#FFAB28]/50 bg-[#FFF0DC] px-3 py-2 text-[12px] text-[#494949] max-w-full">
-                  <AlertTriangle className="w-4 h-4 text-[#FFAB28] shrink-0 mt-0.5" aria-hidden />
-                  <span>
-                    Consider proposing gainshare/hybrid pricing to client to align incentives
-                  </span>
-                </div>
-              ) : null}
-            </>
-          )}
+            ) : null}
+            <div className="bg-white/70 border border-[#161916]/8 rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
+                Quality
+              </div>
+              <div className="text-[16px] font-bold text-[#161916] mb-1">Current → {qualityText}</div>
+              <div className="inline-block px-2 py-0.5 bg-[#E2EFDA] text-[#548235] text-[10px] font-semibold uppercase tracking-wide rounded">
+                Target met
+              </div>
+            </div>
+            <div className="bg-white/70 border border-[#161916]/8 rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
+                Capacity
+              </div>
+              <div className="text-[20px] font-bold text-[#161916] mb-1">{capacityScaleLabel}</div>
+              <div className="text-[12px] text-[#6D7069]">Agent FTE {Math.round(agentToday)} → {Math.round(agentFuture)}</div>
+            </div>
+          </div>
         </div>
 
         {/* Sensitivity Panel */}
