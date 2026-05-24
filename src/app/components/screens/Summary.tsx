@@ -689,7 +689,14 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
     const fileBase = `${clientName}-operating-model-summary-${dateStamp}`;
 
     try {
-      await downloadSummaryReportPdf(summary as Record<string, unknown>, clientName, fileBase);
+      await downloadSummaryReportPdf({
+        summary: summary as Record<string, unknown>,
+        clientName,
+        baseFileName: fileBase,
+        engagement: engagement as Record<string, unknown> | null,
+        tasks: taskRows,
+        pipelineRuns,
+      });
       setExportNotice('Report downloaded as PDF.');
       window.setTimeout(() => setExportNotice(null), 4000);
     } catch (err) {
@@ -1126,7 +1133,7 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
           className="h-11 px-6 bg-[#FD4E59] text-white text-[13px] font-semibold rounded-md hover:bg-[#FD4E59]/90 flex items-center gap-2 disabled:opacity-50 disabled:pointer-events-none"
         >
           {pdfExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-          Export full report →
+          {pdfExporting ? 'Preparing PDF...' : 'Export full report →'}
         </button>
       </div>
     </div>
