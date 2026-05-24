@@ -8,8 +8,9 @@ import {
   ArrowDown,
   ArrowUp,
   Loader2,
+  Star,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useEngagement } from '../../../hooks/useEngagement';
 import { aggregateSummary } from '../../../lib/summaryAggregator';
 import { downloadSummaryReportPdf } from '../../../lib/summaryPdfExport';
@@ -189,6 +190,286 @@ function StackedAllocationBar({
   );
 }
 
+interface GenpactUpliftBlock {
+  margin_current_pct: number;
+  margin_future_pct: number;
+  margin_delta_pp: number;
+  cost_current_monthly: number;
+  cost_future_monthly: number;
+  annual_margin_uplift: number;
+}
+
+interface BillingModelBlock {
+  current: string;
+  recommended: string;
+  rationale_short: string;
+}
+
+interface CompetitivePositionBlock {
+  north_star_score: number;
+  north_star_dimension: string;
+  summary: string;
+  top_differentiator: string;
+}
+
+interface TopReinvestmentBlock {
+  headline: string;
+  opportunity_title: string;
+  category: string;
+  revenue_impact: string;
+  investment_required: string;
+  first_step: string;
+  total_annual_uplift: string;
+}
+
+interface SensitivityHeadlineBlock {
+  most_sensitive_driver: string;
+  downside_pct: number;
+  upside_pct: number;
+  base_pct: number;
+  range_pp: number;
+}
+
+function formatSummaryPct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  const n = Math.round(value * 10) / 10;
+  return `${n % 1 === 0 ? n.toFixed(0) : n.toFixed(1)}%`;
+}
+
+function formatSummaryCurrency(value: number | null | undefined, withMo = false): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  const abs = Math.abs(value);
+  const suffix = withMo ? '/mo' : '';
+  if (abs >= 1_000_000) {
+    const m = value / 1_000_000;
+    return `$${m.toFixed(1).replace(/\.0$/, '')}M${suffix}`;
+  }
+  if (abs >= 1000) return `$${Math.round(value / 1000).toLocaleString('en-US')}k${suffix}`;
+  return `$${Math.round(value).toLocaleString('en-US')}${suffix}`;
+}
+
+function formatSignedPp(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  const sign = value > 0 ? '+' : '';
+  const n = Math.round(value * 10) / 10;
+  return `${sign}${n % 1 === 0 ? n.toFixed(0) : n.toFixed(1)}pp`;
+}
+
+function F5FeatureLink({
+  label,
+  onNavigateToFeature,
+}: {
+  label: string;
+  onNavigateToFeature?: (featureId: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onNavigateToFeature?.('f5')}
+      className="mt-4 text-[13px] italic text-[#FD4E59] hover:underline text-left"
+    >
+      ↗ {label}
+    </button>
+  );
+}
+
+function ExtendedSummaryCard({
+  title,
+  subtitle,
+  chip,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  chip?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="bg-white border border-[#494949]/12 rounded-xl p-6 mb-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <h2 className="text-[12px] font-semibold text-[#6D7069] uppercase tracking-[0.05em]">{title}</h2>
+          {subtitle ? <p className="text-[13px] text-[#6D7069] mt-1">{subtitle}</p> : null}
+        </div>
+        {chip}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function GenpactUpliftCard({
+  data,
+  onNavigateToFeature,
+}: {
+  data: GenpactUpliftBlock;
+  onNavigateToFeature?: (featureId: string) => void;
+}) {
+  return (
+    <ExtendedSummaryCard
+      title="Genpact economic uplift"
+      subtitle="Margin transformation under recommended model"
+    >
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="bg-white border border-[#FFF0DC] rounded-lg p-4">
+          <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">
+            Margin today
+          </div>
+          <div className="text-[18px] font-bold text-[#161916] mb-1">
+            {formatSummaryPct(data.margin_current_pct)} → {formatSummaryPct(data.margin_future_pct)}
+          </div>
+          <div className="text-[14px] font-semibold text-[#548235]">{formatSignedPp(data.margin_delta_pp)}</div>
+        </div>
+        <div className="bg-white border border-[#FFF0DC] rounded-lg p-4">
+          <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">Monthly cost drop</div>
+          <div className="text-[18px] font-bold text-[#161916] mb-1">
+            {formatSummaryCurrency(data.cost_current_monthly, true)} →{' '}
+            {formatSummaryCurrency(data.cost_future_monthly, true)}
+          </div>
+        </div>
+        <div className="bg-white border border-[#FFF0DC] rounded-lg p-4">
+          <div className="text-[11px] font-semibold text-[#6D7069] uppercase tracking-wide mb-2">Annual margin uplift</div>
+          <div className="text-[18px] font-bold text-[#161916] mb-1">
+            {formatSummaryCurrency(data.annual_margin_uplift)}
+          </div>
+        </div>
+      </div>
+      <F5FeatureLink label="View detailed economics on F5" onNavigateToFeature={onNavigateToFeature} />
+    </ExtendedSummaryCard>
+  );
+}
+
+function BillingModelCard({
+  data,
+  onNavigateToFeature,
+}: {
+  data: BillingModelBlock;
+  onNavigateToFeature?: (featureId: string) => void;
+}) {
+  return (
+    <ExtendedSummaryCard
+      title="Billing model"
+      chip={
+        <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-[#FFF0DC] text-[#FFAB28] border border-[#FFAB28]/30">
+          Advisory
+        </span>
+      }
+    >
+      <p className="text-[14px] text-[#161916] mb-1">
+        <span className="font-semibold">Current:</span> {data.current || '—'}
+      </p>
+      <p className="text-[14px] text-[#161916] mb-3">
+        <span className="font-semibold">Recommended:</span> {data.recommended || '—'}
+      </p>
+      {data.rationale_short ? (
+        <p className="text-[14px] text-[#494949] leading-relaxed">{data.rationale_short}</p>
+      ) : null}
+      <F5FeatureLink label="See full analysis on F5" onNavigateToFeature={onNavigateToFeature} />
+    </ExtendedSummaryCard>
+  );
+}
+
+function CompetitivePositionCard({
+  data,
+  onNavigateToFeature,
+}: {
+  data: CompetitivePositionBlock;
+  onNavigateToFeature?: (featureId: string) => void;
+}) {
+  return (
+    <ExtendedSummaryCard title="Competitive position">
+      {data.north_star_score > 0 ? (
+        <div className="flex items-center gap-2 mb-3 text-[14px] text-[#161916]">
+          <Star className="w-4 h-4 text-[#FFAB28] fill-[#FFAB28]" aria-hidden />
+          <span className="font-semibold">{data.north_star_dimension}:</span>
+          <span className="font-bold">{Math.round(data.north_star_score)} of 5</span>
+        </div>
+      ) : null}
+      {data.summary ? <p className="text-[14px] text-[#494949] leading-relaxed mb-3">{data.summary}</p> : null}
+      {data.top_differentiator ? (
+        <p className="text-[14px] text-[#161916]">
+          <span className="font-semibold">Key differentiator:</span> {data.top_differentiator}
+        </p>
+      ) : null}
+      <F5FeatureLink label="See full competitor analysis on F5" onNavigateToFeature={onNavigateToFeature} />
+    </ExtendedSummaryCard>
+  );
+}
+
+function TopReinvestmentCard({
+  data,
+  onNavigateToFeature,
+}: {
+  data: TopReinvestmentBlock;
+  onNavigateToFeature?: (featureId: string) => void;
+}) {
+  const categoryLabel = data.category ? data.category.replace(/_/g, ' ') : '';
+
+  return (
+    <ExtendedSummaryCard title="Top reinvestment opportunity">
+      {data.headline ? <p className="text-[14px] text-[#161916] mb-3 leading-relaxed">{data.headline}</p> : null}
+      <div className="mb-4">
+        <p className="text-[14px] font-semibold text-[#161916] leading-relaxed">
+          ▶ &ldquo;{data.opportunity_title}&rdquo;
+          {categoryLabel ? ` (${categoryLabel})` : ''}
+        </p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4 text-[14px]">
+        <p>
+          <span className="text-[#6D7069]">Investment:</span>{' '}
+          <span className="font-mono font-semibold text-[#161916]">{data.investment_required || '—'}</span>
+        </p>
+        <p>
+          <span className="text-[#6D7069]">Revenue:</span>{' '}
+          <span className="font-mono font-semibold text-[#161916]">{data.revenue_impact || '—'}</span>
+        </p>
+      </div>
+      {data.first_step ? (
+        <div className="border border-[#494949]/12 rounded-lg px-4 py-3 mb-3 text-[14px] text-[#494949] leading-relaxed">
+          <span className="font-semibold text-[#161916]">First step:</span> {data.first_step}
+        </div>
+      ) : null}
+      {data.total_annual_uplift ? (
+        <p className="text-[14px] text-[#161916]">
+          <span className="font-semibold">Total potential annual uplift:</span> {data.total_annual_uplift}
+        </p>
+      ) : null}
+      <F5FeatureLink label="See all opportunities on F5" onNavigateToFeature={onNavigateToFeature} />
+    </ExtendedSummaryCard>
+  );
+}
+
+function SensitivityHeadlineCard({
+  data,
+  onNavigateToFeature,
+}: {
+  data: SensitivityHeadlineBlock;
+  onNavigateToFeature?: (featureId: string) => void;
+}) {
+  return (
+    <ExtendedSummaryCard title="Projection confidence">
+      <p className="text-[14px] text-[#161916] mb-2">
+        <span className="font-semibold">Savings most sensitive to:</span> {data.most_sensitive_driver}
+      </p>
+      <p className="text-[14px] text-[#161916] mb-1">
+        <span className="font-semibold">Projected savings range:</span>{' '}
+        {formatSummaryPct(data.downside_pct)} (downside) — {formatSummaryPct(data.upside_pct)} (upside)
+      </p>
+      <p className="text-[14px] text-[#161916] mb-1">
+        <span className="font-semibold">Base case:</span> {formatSummaryPct(data.base_pct)}
+      </p>
+      <p className="text-[14px] text-[#161916] mb-3">
+        <span className="font-semibold">Variance:</span>{' '}
+        {data.range_pp != null && Number.isFinite(data.range_pp)
+          ? `${Math.round(data.range_pp * 10) / 10} percentage points`
+          : '—'}
+      </p>
+      <p className="text-[14px] text-[#494949]">Watch this driver closely during implementation.</p>
+      <F5FeatureLink label="See full sensitivity tornado chart on F5" onNavigateToFeature={onNavigateToFeature} />
+    </ExtendedSummaryCard>
+  );
+}
+
 
 export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
   const engagementIdFromUrl =
@@ -219,7 +500,7 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
 
     const { data, error } = await supabase
       .from('pipeline_runs')
-      .select('id, f2_matrix, f3_roles, f4_pods, f5_economics, f6_timeline')
+      .select('id, f2_matrix, f3_roles, f4_pods, f5_economics, f6_timeline, competitor_analysis, reinvestment_opportunities')
       .eq('engagement_id', engagementIdFromUrl)
       .maybeSingle();
 
@@ -238,6 +519,8 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
       f4_pods: parseJsonObject(data?.f4_pods),
       f5_economics: parseJsonObject(data?.f5_economics),
       f6_timeline: parseJsonObject(data?.f6_timeline),
+      competitor_analysis: parseJsonObject(data?.competitor_analysis),
+      reinvestment_opportunities: parseJsonObject(data?.reinvestment_opportunities),
     });
     setPipelineLoading(false);
   }, [engagementIdFromUrl]);
@@ -308,6 +591,16 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
   const statTiles = (Array.isArray(summary?.stat_tiles) ? summary.stat_tiles : []) as StatTile[];
   const journey = (Array.isArray(summary?.journey) ? summary.journey : []) as JourneyNode[];
   const allocationSummary = asObj(summary?.allocation_summary);
+  const extendedBlocks = asObj(summary?.extended_blocks);
+  const genpactUplift = asObj(extendedBlocks.genpact_uplift) as GenpactUpliftBlock | Record<string, never>;
+  const billingModel = asObj(extendedBlocks.billing_model) as BillingModelBlock | Record<string, never>;
+  const competitivePosition = asObj(extendedBlocks.competitive_position) as
+    | CompetitivePositionBlock
+    | Record<string, never>;
+  const topReinvestment = asObj(extendedBlocks.top_reinvestment) as TopReinvestmentBlock | Record<string, never>;
+  const sensitivityHeadline = asObj(extendedBlocks.sensitivity_headline) as
+    | SensitivityHeadlineBlock
+    | Record<string, never>;
   const coverageByVolume = asObj(allocationSummary.coverage_by_volume);
   const riskEvidence = asObj(summary?.risk_evidence);
   const coverageCheck = asObj(riskEvidence.coverage_check);
@@ -642,6 +935,35 @@ export function Summary({ onBack, onNavigateToFeature }: SummaryProps) {
           Volume-weighted reflects business impact; task count reflects breadth of change.
         </p>
       </div>
+
+      {extendedBlocks.genpact_uplift ? (
+        <GenpactUpliftCard data={genpactUplift as GenpactUpliftBlock} onNavigateToFeature={onNavigateToFeature} />
+      ) : null}
+
+      {extendedBlocks.billing_model ? (
+        <BillingModelCard data={billingModel as BillingModelBlock} onNavigateToFeature={onNavigateToFeature} />
+      ) : null}
+
+      {extendedBlocks.competitive_position ? (
+        <CompetitivePositionCard
+          data={competitivePosition as CompetitivePositionBlock}
+          onNavigateToFeature={onNavigateToFeature}
+        />
+      ) : null}
+
+      {extendedBlocks.top_reinvestment ? (
+        <TopReinvestmentCard
+          data={topReinvestment as TopReinvestmentBlock}
+          onNavigateToFeature={onNavigateToFeature}
+        />
+      ) : null}
+
+      {extendedBlocks.sensitivity_headline ? (
+        <SensitivityHeadlineCard
+          data={sensitivityHeadline as SensitivityHeadlineBlock}
+          onNavigateToFeature={onNavigateToFeature}
+        />
+      ) : null}
 
       {/* Section 5 — Risk */}
       <div className="mb-6">

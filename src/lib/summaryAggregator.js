@@ -3,8 +3,17 @@
  * into a single render-ready object. Pure functions only (no I/O).
  */
 
+import { COMPETITOR_DIMENSIONS } from './competitorLibrary.js'
 import { normalizeF3Roles } from './f3RolesStorage.js'
 import { getFinalAllocation } from './roleAggregation.js'
+
+const BILLING_MODEL_LABELS = {
+  fixed: 'Fixed fee',
+  transactional: 'Transactional',
+  fte_based: 'FTE-based',
+  hourly: 'Hourly',
+  not_specified: 'Not specified',
+}
 
 const HEADCOUNT_TOLERANCE_PCT = 10
 const PAYBACK_POSITIVE_MONTHS = 12
@@ -676,6 +685,165 @@ function hasF5Data(pipelineRuns) {
 }
 
 /**
+ * @param {string} text
+ * @param {number} maxLen
+ * @returns {string}
+ */
+function truncateText(text, maxLen) {
+  const s = String(text ?? '').trim()
+  if (!s) return ''
+  if (s.length <= maxLen) return s
+  return `${s.slice(0, maxLen).trim()}…`
+}
+
+/**
+ * @param {string | null | undefined} type
+ * @returns {string}
+ */
+function billingTypeLabel(type) {
+  const key = String(type ?? '').trim().toLowerCase()
+  return BILLING_MODEL_LABELS[key] ?? (key ? key.replace(/_/g, ' ') : '')
+}
+
+/**
+ * Builds optional F7 extended summary blocks from saved pipeline feature payloads.
+ * Omits blocks when underlying data is missing.
+ *
+ * @param {Record<string, unknown> | null | undefined} _engagement
+ * @param {Record<string, unknown> | null | undefined} pipelineRuns
+ * @returns {Record<string, unknown>}
+ */
+export function buildExtendedSummaryBlocks(_engagement, pipelineRuns) {
+  const runs = asObj(pipelineRuns)
+  const f5Wrap = asObj(runs.f5_economics)
+  const economicsResult = asObj(f5Wrap.economics_result)
+  const genpactView = asObj(economicsResult.genpact_view)
+
+  /** @type {Record<string, unknown>} */
+  const blocks = {}
+
+  if (
+    genpactView.gross_margin_pct_current != null ||
+    genpactView.gross_margin_pct_future != null ||
+    genpactView.cost_to_deliver_current != null
+  ) {
+    const marginCurrent = toNum(genpactView.gross_margin_pct_current)
+    const marginFuture = toNum(genpactView.gross_margin_pct_future)
+    const revenueFuture = toNum(genpactView.revenue_future)
+    const costCurrent = toNum(genpactView.cost_to_deliver_current)
+    const costFuture = toNum(genpactView.cost_to_deliver_future)
+    const marginDeltaPp = round(
+      toNum(genpactView.gross_margin_delta_pp) || marginFuture - marginCurrent,
+      1,
+    )
+
+    if (marginCurrent > 0 || marginFuture > 0 || costCurrent > 0) {
+      blocks.genpact_uplift = {
+        revenue_monthly: revenueFuture,
+        cost_current_monthly: costCurrent,
+        cost_future_monthly: costFuture,
+        margin_current_pct: marginCurrent,
+        margin_future_pct: marginFuture,
+        margin_delta_pp: marginDeltaPp,
+        annual_margin_uplift: round(((marginFuture - marginCurrent) / 100) * (revenueFuture * 12), 0),
+      }
+    }
+  }
+
+  const billingRec = asObj(economicsResult.billing_model_recommendation)
+  if (billingRec.recommended_type) {
+    const currentDisplay =
+      typeof genpactView.billing_model_display === 'string' && genpactView.billing_model_display.trim()
+        ? genpactView.billing_model_display.trim()
+        : billingTypeLabel(billingRec.current_type)
+    const recommendedLabel = String(billingRec.recommended_label ?? billingTypeLabel(billingRec.recommended_type))
+    const recommendedDisplay = String(billingRec.recommended_display ?? '').trim()
+    const recommended = recommendedDisplay ? `${recommendedLabel} (${recommendedDisplay})` : recommendedLabel
+
+    if (currentDisplay || recommended) {
+      blocks.billing_model = {
+        current: currentDisplay || '—',
+        recommended: recommended || '—',
+        rationale_short: truncateText(billingRec.rationale, 200),
+      }
+    }
+  }
+
+  const competitor = asObj(runs.competitor_analysis)
+  const competitorList = Array.isArray(competitor.competitors) ? competitor.competitors : []
+  const genpactCompetitor = competitorList.find((row) => asObj(row).is_genpact === true)
+  if (genpactCompetitor || typeof competitor.summary === 'string') {
+    const northStarId =
+      typeof competitor.north_star_dimension === 'string' && competitor.north_star_dimension.trim()
+        ? competitor.north_star_dimension.trim()
+        : COMPETITOR_DIMENSIONS.find((d) => d.is_north_star)?.id ?? 'ai_automation'
+    const dimMeta = COMPETITOR_DIMENSIONS.find((d) => d.id === northStarId)
+    const genpactScores = asObj(asObj(genpactCompetitor).scores)
+    const northStarScore = toNum(genpactScores[northStarId])
+    const differentiators = Array.isArray(competitor.key_differentiators)
+      ? competitor.key_differentiators.filter((x) => typeof x === 'string' && x.trim())
+      : []
+
+    if (northStarScore > 0 || typeof competitor.summary === 'string') {
+      blocks.competitive_position = {
+        north_star_score: northStarScore,
+        north_star_dimension: dimMeta?.label ?? 'AI/Automation Maturity',
+        summary: truncateText(competitor.summary, 320),
+        top_differentiator: differentiators[0] ?? '',
+      }
+    }
+  }
+
+  const reinvest = asObj(runs.reinvestment_opportunities)
+  const opportunities = Array.isArray(reinvest.opportunities) ? reinvest.opportunities : []
+  if (opportunities.length > 0) {
+    const top = asObj(opportunities[0])
+    const title = String(top.title ?? '').trim()
+    if (title) {
+      blocks.top_reinvestment = {
+        headline: String(reinvest.headline ?? '').trim(),
+        opportunity_title: title,
+        category: String(top.category ?? '').trim(),
+        revenue_impact: String(top.revenue_impact ?? '').trim(),
+        investment_required: String(top.investment_required ?? '').trim(),
+        first_step: String(top.first_step ?? '').trim(),
+        total_annual_uplift: String(reinvest.total_potential_annual_uplift ?? '').trim(),
+      }
+    }
+  }
+
+  const sensitivity = asObj(economicsResult.sensitivity)
+  const drivers = Array.isArray(sensitivity.drivers) ? sensitivity.drivers : []
+  if (drivers.length > 0) {
+    const parsed = drivers.map((row) => {
+      const d = asObj(row)
+      const low = toNum(d.low_pct)
+      const high = toNum(d.high_pct)
+      return {
+        name: String(d.name ?? 'Driver'),
+        low,
+        high,
+        base: toNum(d.base_pct),
+        range: Math.abs(high - low),
+      }
+    })
+    const sorted = [...parsed].sort((a, b) => b.range - a.range)
+    const topDriver = sorted[0]
+    if (topDriver && topDriver.range > 0) {
+      blocks.sensitivity_headline = {
+        most_sensitive_driver: topDriver.name,
+        downside_pct: topDriver.low,
+        upside_pct: topDriver.high,
+        base_pct: topDriver.base,
+        range_pp: round(topDriver.range, 1),
+      }
+    }
+  }
+
+  return blocks
+}
+
+/**
  * Aggregates engagement, task, and pipeline-run outputs into the F7 summary object.
  *
  * @param {Record<string, unknown> | null | undefined} engagement Engagement row (intake_data, scores, metadata).
@@ -685,7 +853,9 @@ function hasF5Data(pipelineRuns) {
  *   f3_roles?: unknown,
  *   f4_pods?: unknown,
  *   f5_economics?: unknown,
- *   f6_timeline?: unknown
+ *   f6_timeline?: unknown,
+ *   competitor_analysis?: unknown,
+ *   reinvestment_opportunities?: unknown
  * } | null | undefined} pipelineRuns Saved `pipeline_runs` feature payloads.
  * @returns {Record<string, unknown>} Structured summary for F7 rendering.
  */
@@ -723,6 +893,7 @@ export function aggregateSummary(engagement, tasks, pipelineRuns) {
     stat_tiles: buildStatTiles(engagement, taskList, economicsResult, runs.f4_pods, hasF5),
     journey: buildJourney(engagement, taskList, runs, hasF2, hasF5),
     allocation_summary,
+    extended_blocks: buildExtendedSummaryBlocks(engagement, runs),
     risk_evidence: buildRiskEvidence(engagement, taskList),
     caveats: buildCaveats(engagement, taskList),
     limitations: [
