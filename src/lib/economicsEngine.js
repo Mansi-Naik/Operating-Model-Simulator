@@ -806,13 +806,18 @@ export function computeBillingModelRecommendation(currentState, futureState, bil
     { type: 'hourly', model: { type: 'hourly', hourly_rate: hourlyRate || defaultFteRate / 160 } },
   ]
 
-  /** @type {{ type: string, margin: number, display: string } | null} */
+  /** @type {{ type: string, margin: number, display: string, unitCostSuggestion: number } | null} */
   let best = null
   for (const c of candidates) {
     const view = computeGenpactView(currentState, futureState, c.model, engagement)
     const margin = toNum(view.gross_margin_pct_future)
     if (!best || margin > best.margin) {
-      best = { type: c.type, margin, display: String(view.billing_model_display ?? '') }
+      best = {
+        type: c.type,
+        margin,
+        display: String(view.billing_model_display ?? ''),
+        unitCostSuggestion: c.type === 'transactional' ? nonNeg(c.model?.unit_cost) : 0,
+      }
     }
   }
 
@@ -828,11 +833,19 @@ export function computeBillingModelRecommendation(currentState, futureState, bil
     rationale = `Current billing model already aligns with the strongest projected margin (${currentMargin.toFixed(0)}%).`
   }
 
+  const transactionalUnitCostSuggested =
+    best?.type === 'transactional' && best.unitCostSuggestion > 0 ? best.unitCostSuggestion : null
+  if (transactionalUnitCostSuggested != null) {
+    const unitCostLabel = transactionalUnitCostSuggested.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
+    rationale += ` Suggested unit cost: $${unitCostLabel}/unit (set this in F1 Preferences).`
+  }
+
   return {
     recommended_type: best?.type ?? null,
     recommended_label: bestLabel,
     recommended_margin_future_pct: best?.margin ?? 0,
     recommended_display: best?.display ?? '',
+    recommended_unit_cost: transactionalUnitCostSuggested,
     current_type: currentType,
     current_margin_future_pct: currentMargin,
     rationale,

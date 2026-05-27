@@ -662,6 +662,7 @@ export function F5_1_EconomicsDashboard({
   const genpactHcDeltaPct = toNum(genpactView.headcount_delta_pct);
   const billingModelDisplay = String(genpactView.billing_model_display ?? 'Not specified');
   const genpactNarrative = String(genpactView.narrative ?? '');
+  const recommendedUnitCost = toNum(billingRecommendation.recommended_unit_cost);
   const monthlyDeliverySavings = Math.max(0, costDeliverCurrent - costDeliverFuture);
   const clientName =
     typeof engagement?.client_name === 'string' && engagement.client_name.trim()
@@ -907,6 +908,11 @@ export function F5_1_EconomicsDashboard({
               {' · '}
               {String(billingRecommendation.rationale ?? '')}
             </p>
+            {String(billingRecommendation.recommended_type ?? '') === 'transactional' && recommendedUnitCost > 0 ? (
+              <p className="text-[13px] text-[#494949] mb-2">
+                Suggested unit cost for intake: <span className="font-semibold">{fmtCurrency2(recommendedUnitCost)}/unit</span>
+              </p>
+            ) : null}
             {genpactNarrative ? (
               <p className="text-[13px] text-[#494949] leading-relaxed mb-2">{genpactNarrative}</p>
             ) : null}

@@ -4,7 +4,6 @@ import {
   hasMeaningfulJson,
   tasksFullyAllocated,
   tasksHaveAiAllocations,
-  tasksHaveF2Allocations,
 } from '../lib/pipelineCacheUtils.js'
 import { supabase } from '../supabaseClient.js'
 
@@ -127,7 +126,9 @@ export function usePipelineRuns(engagementId) {
         supabase
           .from('tasks')
           .select(
-            'id, task_id, task_name, role_performing, ai_allocation, user_allocation, ai_confidence_calibrated, ai_confidence_raw, regulatory_constraint, consequence_of_error',
+            // Keep this list minimal and schema-stable so nav ticks still work
+            // even on DBs that do not yet have newer confidence columns.
+            'id, task_id, task_name, role_performing, ai_allocation, user_allocation, regulatory_constraint, consequence_of_error',
           )
           .eq('engagement_id', engagementId),
       ])
